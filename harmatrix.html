@@ -2813,17 +2813,32 @@
     // Récupération fiable du .wav sur iPhone : feuille de partage iOS (« Enregistrer dans Fichiers »),
     // avec repli sur le téléchargement classique pour le bureau.
     function saveBlobFile(blob, name, label) {
-      try {
-        const file = new File([blob], name, { type: blob.type || "audio/wav" });
-        if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-          navigator.share({ files: [file], title: "Harmatrix" })
+      const fallback = () => {
+        downloadBlob(blob, name);
+        hint.textContent = (label || "Fichier prêt") + " — s'il n'apparaît pas, ouvre l'app dans Safari (pas l'aperçu intégré).";
+      };
+      if (navigator.share) {
+        // iOS bloque certains types au partage (ex. audio/midi via canShare).
+        // On tente le type réel, puis on retente en générique que iOS accepte.
+        let shareFile = null;
+        try {
+          const f = new File([blob], name, { type: blob.type || "application/octet-stream" });
+          if (!navigator.canShare || navigator.canShare({ files: [f] })) shareFile = f;
+        } catch (e) {}
+        if (!shareFile) {
+          try {
+            const g = new File([blob], name, { type: "application/octet-stream" });
+            if (!navigator.canShare || navigator.canShare({ files: [g] })) shareFile = g;
+          } catch (e) {}
+        }
+        if (shareFile) {
+          navigator.share({ files: [shareFile], title: "Harmatrix" })
             .then(() => { hint.textContent = "Partagé — choisis « Enregistrer dans Fichiers »."; })
-            .catch(() => {});
+            .catch(() => fallback());
           return;
         }
-      } catch (e) {}
-      downloadBlob(blob, name);
-      hint.textContent = (label || "Fichier prêt") + " — s'il n'apparaît pas, ouvre l'app dans Safari (pas l'aperçu intégré).";
+      }
+      fallback();
     }
 
     /* ===== Export MIDI (.mid) — Standard MIDI File, une piste/canal par couche ===== */
