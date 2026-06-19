@@ -874,6 +874,20 @@
     #voiceModal[data-stage="recording"] .vr-meter { display: block; }
     #voiceModal[data-stage="review"] .vr-timer { display: block; }
     #voiceModal[data-stage="review"] .vr-review { display: flex; }
+    #voiceModal .vr-edit { display: none; flex-direction: column; gap: 10px; width: min(360px, 92%); }
+    #voiceModal[data-stage="review"] .vr-edit { display: flex; }
+    .vr-name {
+      width: 100%; height: 44px; text-align: center; font-size: 15px; font-weight: 700;
+      border: 1px solid var(--line); background: rgba(255,255,255,.06); color: var(--text);
+      border-radius: 12px; font-family: inherit; padding: 0 12px;
+    }
+    .vr-param { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
+    .vr-param > label { min-width: 72px; text-align: left; font-weight: 700; }
+    .vr-param > select { flex: 1; height: 34px; }
+    .vr-param > input[type=range] { flex: 1; accent-color: var(--scale); height: 4px; margin: 0; min-width: 0; }
+    .vr-param > em { font-style: normal; min-width: 44px; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+    .vr-btn.danger { flex: 0 0 auto; min-width: 54px; background: color-mix(in srgb, var(--outside) 35%, #111 65%); border-color: color-mix(in srgb, var(--outside) 55%, transparent); }
+    #voiceModal:not([data-editing="1"]) .vr-btn.danger { display: none; }
   </style>
 </head>
 <body>
@@ -928,7 +942,7 @@
       <button class="voice" data-voice="strings">Cordes</button>
       <button class="voice" data-voice="brass">Cuivres</button>
       <button class="voice" data-voice="drums">Rythme</button>
-      <button class="voice empty" data-voice="sample">🎤 Voice</button>
+      <button class="voice" data-voice="sample" title="Créer une voix">🎤 Voix +</button>
       <button class="voice add" id="fmAddBtn" title="Créer un instrument FM" aria-label="Créer un instrument FM">+</button>
     </section>
 
@@ -1044,7 +1058,7 @@
           <button id="importBtn">📂 Charger un projet</button>
         </div>
         <input id="importFile" type="file" accept="application/json,.json" style="display:none" />
-        <div class="midi-status">Le master capte tout ce que tu entends (instruments, séquenceur, effets) en .wav. Le projet (.json) sauvegarde patterns, chanson, instruments FM et réglages.</div>
+        <div class="midi-status">Le master capte tout ce que tu entends (instruments, séquenceur, effets) en .wav. Le projet (.json) sauvegarde patterns, chanson, instruments FM, voix et réglages.</div>
       </section>
       <section class="card">
         <h3>Retour haptique</h3>
@@ -1059,27 +1073,11 @@
         <div class="midi-status">iOS Safari ne vibre pas — active le click audio pour un retour sonore tactile.</div>
       </section>
       <section class="card">
-        <h3>Voice — échantillon micro</h3>
+        <h3>Voix — échantillons micro</h3>
         <div class="card-actions">
-          <button id="recVoiceBtn">🎤 Enregistrer / refaire</button>
-          <button id="previewSampleBtn">▶ Test</button>
-          <button id="clearSampleBtn" class="delete-btn">⌫</button>
+          <button id="recVoiceBtn">🎤 Créer une voix</button>
         </div>
-        <div class="card-row" style="margin-top: 8px;">
-          <label>Note base</label>
-          <select id="sampleBaseSelect"></select>
-        </div>
-        <div class="card-row">
-          <label>FM ratio</label>
-          <input id="modRatioSlider" type="range" min="0.25" max="8" step="0.01" value="1" />
-          <em class="val" id="modRatioVal">1.00×</em>
-        </div>
-        <div class="card-row">
-          <label>FM depth</label>
-          <input id="modDepthSlider" type="range" min="0" max="1" step="0.01" value="0" />
-          <em class="val" id="modDepthVal">0%</em>
-        </div>
-        <div class="midi-status" id="sampleStatus">Pas d'échantillon.</div>
+        <div class="midi-status" id="sampleStatus">Enregistre ta voix (ou n'importe quel son) : elle devient un instrument jouable, avec son propre bouton dans la rangée des sons. Tu peux en créer plusieurs. Appui long sur une voix pour la modifier / supprimer. Les voix sont sauvegardées automatiquement.</div>
       </section>
     </div>
   </div>
@@ -1125,10 +1123,17 @@
       <div class="vr-timer" id="vrTimer">0.0s</div>
       <div class="vr-meter" id="vrMeter" aria-hidden="true"><div class="vr-meter-fill" id="vrMeterFill"></div></div>
 
+      <div class="vr-edit">
+        <input id="vrName" class="vr-name" type="text" maxlength="14" placeholder="Nom de la voix" />
+        <div class="vr-param"><label>Note base</label><select id="vrBase"></select></div>
+        <div class="vr-param"><label>FM ratio</label><input id="vrRatio" type="range" min="0.25" max="8" step="0.01" value="1" /><em id="vrRatioVal">1.00×</em></div>
+        <div class="vr-param"><label>FM depth</label><input id="vrDepth" type="range" min="0" max="1" step="0.01" value="0" /><em id="vrDepthVal">0%</em></div>
+      </div>
       <div class="vr-review">
         <button class="vr-btn" id="vrPlayBtn">▶ Écouter</button>
         <button class="vr-btn" id="vrRedoBtn">↺ Refaire</button>
-        <button class="vr-btn primary" id="vrUseBtn">✓ Utiliser</button>
+        <button class="vr-btn danger" id="vrDeleteBtn" title="Supprimer">🗑</button>
+        <button class="vr-btn primary" id="vrUseBtn">✓ Enregistrer</button>
       </div>
 
       <p class="vr-status" id="vrStatus"></p>
@@ -1829,6 +1834,11 @@
         const inst = customInstruments.find(x => x.id === id);
         if (inst) return playFM(midi, vel, inst, panPos);
       }
+      if (typeof vc === "string" && vc.startsWith("voice:")) {
+        const v = voiceSamples.find(x => x.id === vc.slice(6));
+        if (v) return playSampleObj(midi, vel, panPos, v);
+        return { setVibrato() {}, stop() {} };
+      }
       switch (vc) {
         case "keys":    return playKeys(midi, vel, panPos);
         case "pluck":   return playPluck(midi, vel, panPos);
@@ -1836,7 +1846,6 @@
         case "strings": return playStrings(midi, vel, panPos);
         case "brass":   return playBrass(midi, vel, panPos);
         case "drums":   return playDrums(midi, vel, panPos);
-        case "sample":  return playSample(midi, vel, panPos);
         default:       return playPad(midi, vel, panPos);
       }
     }
@@ -2241,7 +2250,7 @@
       btn.addEventListener("click", () => {
         if (btn.classList.contains("add")) return;
         // 🎤 Voice : si aucun échantillon, ouvre l'enregistreur guidé au lieu de sélectionner du vide
-        if (btn.dataset.voice === "sample" && !voiceSample.buffer) { openVoiceRecorder(); return; }
+        if (btn.dataset.voice === "sample") { openVoiceRecorder(); return; }
         document.querySelectorAll(".voice").forEach(b => b.classList.remove("on"));
         btn.classList.add("on");
         voice = btn.dataset.voice;
@@ -2837,6 +2846,7 @@
         version: 1,
         exportedAt: new Date().toISOString(),
         instruments: customInstruments,
+        voices: voiceSamples.map(v => ({ id: v.id, name: v.name, baseMidi: v.baseMidi, modRatio: v.modRatio, modDepth: v.modDepth, sampleRate: v.sampleRate, pcm: int16ToB64(v.int16) })),
         loop: { events: loopEvents, length: loopLength },
         sequencer: { patterns: sequencer.patterns, activePattern: sequencer.activePattern, subdivision: sequencer.subdivision, song: sequencer.song, songMode: sequencer.songMode },
         settings: {
@@ -2870,6 +2880,15 @@
             customInstruments = data.instruments;
             saveCustomInstruments();
             refreshCustomVoiceButtons();
+          }
+          if (Array.isArray(data.voices)) {
+            voiceSamples = data.voices.filter(v => v && v.pcm).map(v => ({
+              id: v.id || genVoiceId(), name: v.name || "Voix",
+              baseMidi: v.baseMidi || 60, modRatio: v.modRatio || 1, modDepth: v.modDepth || 0,
+              sampleRate: v.sampleRate || 44100, int16: b64ToInt16(v.pcm), buffer: null
+            }));
+            voiceSamples.forEach(v => vdbPut(v));
+            refreshVoiceButtons();
           }
           if (data.sequencer) {
             const sd = data.sequencer;
@@ -2991,10 +3010,102 @@
     // redécoder son propre mp4/AAC).
     let voiceRec = { active: false, source: null, node: null, sink: null, stream: null, chunks: [], length: 0 };
 
-    function updateVoiceButton() {
-      const btn = document.querySelector('.voice[data-voice="sample"]');
-      if (btn) btn.classList.toggle("empty", !voiceSample.buffer);
+    let voiceSamples = [];      // voix sauvegardées : { id, name, baseMidi, modRatio, modDepth, sampleRate, int16, buffer }
+    let editingVoiceId = null;  // id de la voix éditée dans la modale (null = nouvelle voix)
+
+    function genVoiceId() { return "v" + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36); }
+
+    /* --- (dé)sérialisation PCM --- */
+    function bufferToInt16(buf) {
+      const f = buf.getChannelData(0), n = f.length, i16 = new Int16Array(n);
+      for (let i = 0; i < n; i++) { const s = Math.max(-1, Math.min(1, f[i])); i16[i] = s < 0 ? s * 0x8000 : s * 0x7fff; }
+      return i16;
     }
+    function int16ToBuffer(i16, sampleRate) {
+      ensureAudio();
+      const sr = sampleRate || audioCtx.sampleRate;
+      const b = audioCtx.createBuffer(1, i16.length, sr), d = b.getChannelData(0);
+      for (let i = 0; i < i16.length; i++) d[i] = i16[i] / 0x8000;
+      return b;
+    }
+    function int16ToB64(i16) {
+      const u8 = new Uint8Array(i16.buffer, i16.byteOffset, i16.byteLength);
+      let bin = ""; const CH = 0x8000;
+      for (let i = 0; i < u8.length; i += CH) bin += String.fromCharCode.apply(null, u8.subarray(i, i + CH));
+      return btoa(bin);
+    }
+    function b64ToInt16(b64) {
+      const bin = atob(b64), u8 = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+      return new Int16Array(u8.buffer);
+    }
+    function voiceBufferOf(v) {
+      if (v.buffer) return v.buffer;
+      if (v.int16 && audioCtx) { v.buffer = int16ToBuffer(v.int16, v.sampleRate); return v.buffer; }
+      return null;
+    }
+
+    /* --- persistance IndexedDB --- */
+    let _vdb = null;
+    function vdb() {
+      return new Promise((res, rej) => {
+        if (_vdb) return res(_vdb);
+        let r;
+        try { r = indexedDB.open("harmatrix", 1); } catch (e) { return rej(e); }
+        r.onupgradeneeded = () => { const db = r.result; if (!db.objectStoreNames.contains("voices")) db.createObjectStore("voices", { keyPath: "id" }); };
+        r.onsuccess = () => { _vdb = r.result; res(_vdb); };
+        r.onerror = () => rej(r.error);
+      });
+    }
+    function voiceRecord(v) { return { id: v.id, name: v.name, baseMidi: v.baseMidi, modRatio: v.modRatio, modDepth: v.modDepth, sampleRate: v.sampleRate, pcm: v.int16 }; }
+    async function vdbPut(v) { try { const db = await vdb(); await new Promise((res, rej) => { const tx = db.transaction("voices", "readwrite"); tx.objectStore("voices").put(voiceRecord(v)); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); } catch (e) {} }
+    async function vdbDelete(id) { try { const db = await vdb(); await new Promise((res, rej) => { const tx = db.transaction("voices", "readwrite"); tx.objectStore("voices").delete(id); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); } catch (e) {} }
+    async function vdbGetAll() { try { const db = await vdb(); return await new Promise((res, rej) => { const tx = db.transaction("voices", "readonly"); const rq = tx.objectStore("voices").getAll(); rq.onsuccess = () => res(rq.result || []); rq.onerror = () => rej(rq.error); }); } catch (e) { return []; } }
+
+    async function loadVoiceSamples() {
+      const recs = await vdbGetAll();
+      voiceSamples = recs.map(r => ({
+        id: r.id, name: r.name, baseMidi: r.baseMidi, modRatio: r.modRatio, modDepth: r.modDepth,
+        sampleRate: r.sampleRate, int16: (r.pcm instanceof Int16Array) ? r.pcm : new Int16Array(r.pcm), buffer: null
+      }));
+      refreshVoiceButtons();
+    }
+
+    /* --- rangée des voix (boutons d'instrument) --- */
+    function refreshVoiceButtons() {
+      document.querySelectorAll(".voice.customvoice").forEach(b => b.remove());
+      const anchor = document.querySelector('.voice[data-voice="sample"]');
+      if (!anchor) return;
+      voiceSamples.forEach(v => {
+        const btn = document.createElement("button");
+        btn.className = "voice customvoice";
+        btn.dataset.voice = "voice:" + v.id;
+        btn.textContent = "🎤 " + v.name;
+        btn.title = "Tap pour jouer, appui long pour modifier";
+        if (voice === "voice:" + v.id) btn.classList.add("on");
+        let lpTimer = null, lpFired = false;
+        btn.addEventListener("pointerdown", () => { lpFired = false; lpTimer = setTimeout(() => { lpFired = true; openVoiceEditor(v); }, 600); });
+        const cancel = () => { if (lpTimer) clearTimeout(lpTimer); lpTimer = null; };
+        btn.addEventListener("pointerup", cancel);
+        btn.addEventListener("pointerleave", cancel);
+        btn.addEventListener("pointercancel", cancel);
+        btn.addEventListener("click", () => {
+          if (lpFired) { lpFired = false; return; }
+          selectVoice("voice:" + v.id);
+        });
+        anchor.parentNode.insertBefore(btn, anchor);
+      });
+    }
+    function selectVoice(vc) {
+      document.querySelectorAll(".voice").forEach(b => b.classList.remove("on"));
+      const b = document.querySelector('.voice[data-voice="' + vc.replace(/"/g, '\\"') + '"]');
+      if (b) b.classList.add("on");
+      voice = vc;
+      if (typeof sequencer !== "undefined" && sequencer.selectedStep >= 0) updateSeqHint();
+      if (haptics && haptics.medium) haptics.medium();
+    }
+
+    function updateVoiceButton() { /* la rangée des voix est gérée par refreshVoiceButtons() */ }
 
     function setSampleStatus(text, cls) {
       const s = document.getElementById("sampleStatus");
@@ -3013,7 +3124,7 @@
         if (hint) hint.textContent = "J'écoute… parle ou chante. La barre bouge = ça capte. Touche pour arrêter.";
       } else if (stage === "review") {
         if (icon) icon.textContent = "🎤";
-        if (hint) hint.textContent = "Réécoute. « Utiliser » pour jouer ta voix sur la grille, ou « Refaire ».";
+        if (hint) hint.textContent = "Nomme ta voix, règle si besoin, puis « Enregistrer ». Tu peux « Écouter » ou « Refaire ».";
       } else {
         if (icon) icon.textContent = "🎤";
         if (hint) hint.textContent = "Touche le micro et enregistre ta voix, un instrument, n'importe quel son.";
@@ -3030,20 +3141,50 @@
       requestAnimationFrame(voiceMeterLoop);
     }
 
+    function fillVoiceEditFields() {
+      const nm = document.getElementById("vrName");
+      const base = document.getElementById("vrBase");
+      const ratio = document.getElementById("vrRatio");
+      const depth = document.getElementById("vrDepth");
+      if (base) base.value = String(voiceSample.baseMidi);
+      if (ratio) { ratio.value = String(voiceSample.modRatio); const rv = document.getElementById("vrRatioVal"); if (rv) rv.textContent = voiceSample.modRatio.toFixed(2) + "×"; }
+      if (depth) { depth.value = String(voiceSample.modDepth); const dv = document.getElementById("vrDepthVal"); if (dv) dv.textContent = Math.round(voiceSample.modDepth * 100) + "%"; }
+      if (nm) {
+        const editing = editingVoiceId ? voiceSamples.find(x => x.id === editingVoiceId) : null;
+        nm.value = editing ? editing.name : "";
+        nm.placeholder = "Voix " + (voiceSamples.length + 1);
+      }
+    }
+
     function openVoiceRecorder() {
       ensureAudio();
       const modal = document.getElementById("voiceModal");
       if (!modal) return;
+      editingVoiceId = null;
+      voiceSample = { buffer: null, baseMidi: 60, modRatio: 1.0, modDepth: 0 };
+      modal.dataset.editing = "0";
       modal.hidden = false;
       const vs = document.getElementById("vrStatus");
       if (vs) { vs.textContent = ""; vs.className = "vr-status"; }
-      if (voiceSample.buffer) {
-        setVoiceStage("review");
-        const t = document.getElementById("vrTimer");
-        if (t) t.textContent = voiceSample.buffer.duration.toFixed(1) + "s";
-      } else {
-        setVoiceStage("idle");
-      }
+      const fill = document.getElementById("vrMeterFill"); if (fill) fill.style.width = "0%";
+      fillVoiceEditFields();
+      setVoiceStage("idle");
+    }
+
+    function openVoiceEditor(v) {
+      ensureAudio();
+      const modal = document.getElementById("voiceModal");
+      if (!modal) return;
+      editingVoiceId = v.id;
+      voiceSample = { buffer: voiceBufferOf(v), baseMidi: v.baseMidi, modRatio: v.modRatio, modDepth: v.modDepth };
+      modal.dataset.editing = "1";
+      modal.hidden = false;
+      const vs = document.getElementById("vrStatus");
+      if (vs) { vs.textContent = "Modifie le nom/les réglages, ré-enregistre, ou supprime."; vs.className = "vr-status"; }
+      setVoiceStage("review");
+      fillVoiceEditFields();
+      const t = document.getElementById("vrTimer");
+      if (t && voiceSample.buffer) t.textContent = voiceSample.buffer.duration.toFixed(1) + "s";
     }
 
     function closeVoiceRecorder() {
@@ -3052,13 +3193,34 @@
       if (modal) modal.hidden = true;
     }
 
-    function useVoiceSample() {
+    function saveVoiceFromDraft() {
       if (!voiceSample.buffer) { openVoiceRecorder(); return; }
-      document.querySelectorAll(".voice").forEach(b => b.classList.remove("on"));
-      const sb = document.querySelector('.voice[data-voice="sample"]');
-      if (sb) sb.classList.add("on");
-      voice = "sample";
+      const nm = document.getElementById("vrName");
+      const name = ((nm && nm.value) || "").trim() || ("Voix " + (voiceSamples.length + 1));
+      const i16 = bufferToInt16(voiceSample.buffer);
+      let v = editingVoiceId ? voiceSamples.find(x => x.id === editingVoiceId) : null;
+      if (v) {
+        v.name = name; v.baseMidi = voiceSample.baseMidi; v.modRatio = voiceSample.modRatio; v.modDepth = voiceSample.modDepth;
+        v.buffer = voiceSample.buffer; v.sampleRate = voiceSample.buffer.sampleRate; v.int16 = i16;
+      } else {
+        v = { id: genVoiceId(), name, baseMidi: voiceSample.baseMidi, modRatio: voiceSample.modRatio, modDepth: voiceSample.modDepth, sampleRate: voiceSample.buffer.sampleRate, buffer: voiceSample.buffer, int16: i16 };
+        voiceSamples.push(v);
+      }
+      vdbPut(v);
+      refreshVoiceButtons();
+      selectVoice("voice:" + v.id);
       if (haptics && haptics.success) haptics.success();
+      closeVoiceRecorder();
+    }
+
+    function deleteCurrentVoice() {
+      if (!editingVoiceId) { closeVoiceRecorder(); return; }
+      const id = editingVoiceId;
+      voiceSamples = voiceSamples.filter(x => x.id !== id);
+      vdbDelete(id);
+      if (voice === "voice:" + id) selectVoice("pad");
+      editingVoiceId = null;
+      refreshVoiceButtons();
       closeVoiceRecorder();
     }
 
@@ -3134,14 +3296,14 @@
           for (let i = 0; i < data.length; i++) data[i] *= g;
         }
         voiceSample.buffer = buffer;
-        updateVoiceButton();
         setSampleStatus("✓ " + buffer.duration.toFixed(2) + "s · 1ch", "ok");
         setVoiceStage("review");
+        fillVoiceEditFields();
         const t = document.getElementById("vrTimer");
         if (t) t.textContent = buffer.duration.toFixed(1) + "s";
         if (vs) {
           if (peak <= 0.02) { vs.textContent = "⚠️ Son très faible — rapproche-toi du micro et refais."; vs.className = "vr-status err"; }
-          else { vs.textContent = "✓ Capté ! Écoute, puis « Utiliser »."; vs.className = "vr-status ok"; }
+          else { vs.textContent = "✓ Capté ! Nomme ta voix, puis « Enregistrer »."; vs.className = "vr-status ok"; }
         }
         if (haptics && haptics.success) haptics.success();
       } else {
@@ -3157,7 +3319,7 @@
     function previewSample() {
       if (!voiceSample.buffer) return;
       ensureAudio();
-      const h = playSample(voiceSample.baseMidi, 0.85);
+      const h = playSampleObj(voiceSample.baseMidi, 0.85, 0, voiceSample);
       setTimeout(() => h.stop && h.stop(), 1500);
     }
 
@@ -3173,15 +3335,17 @@
       if (modal && !modal.hidden) setVoiceStage("idle");
     }
 
-    function playSample(midi, vel, panPos = 0) {
-      if (!voiceSample.buffer) return { setVibrato() {}, stop() {} };
+    function playSampleObj(midi, vel, panPos, vs) {
+      const buffer = voiceBufferOf(vs);
+      if (!buffer) return { setVibrato() {}, stop() {} };
       ensureAudio();
+      panPos = panPos || 0;
       const now = audioCtx.currentTime;
 
       const source = audioCtx.createBufferSource();
-      source.buffer = voiceSample.buffer;
+      source.buffer = buffer;
       source.loop = true;
-      source.playbackRate.value = Math.pow(2, (midi - voiceSample.baseMidi) / 12);
+      source.playbackRate.value = Math.pow(2, (midi - vs.baseMidi) / 12);
 
       // Amp envelope (sustains while held; stop() handles release)
       const amp = audioCtx.createGain();
@@ -3191,12 +3355,12 @@
       // FM modulator: sine oscillator at (baseFreq × ratio), modulates source.detune in cents
       const baseFreq = midiToFreq(midi);
       let modOsc = null;
-      if (voiceSample.modDepth > 0) {
+      if (vs.modDepth > 0) {
         modOsc = audioCtx.createOscillator();
         modOsc.type = "sine";
-        modOsc.frequency.value = baseFreq * voiceSample.modRatio;
+        modOsc.frequency.value = baseFreq * vs.modRatio;
         const modGain = audioCtx.createGain();
-        modGain.gain.value = voiceSample.modDepth * 2400; // up to ±24 semitones in cents
+        modGain.gain.value = vs.modDepth * 2400; // up to ±24 semitones in cents
         modOsc.connect(modGain);
         modGain.connect(source.detune);
         modOsc.start(now);
@@ -3229,7 +3393,8 @@
 
     /* Populate base-note select (C2 to C6) */
     (function() {
-      const sel = document.getElementById("sampleBaseSelect");
+      const sel = document.getElementById("vrBase");
+      if (!sel) return;
       const en = ["C","C#","D","Eb","E","F","F#","G","Ab","A","Bb","B"];
       for (let m = 36; m <= 84; m++) {
         const opt = document.createElement("option");
@@ -3271,24 +3436,24 @@
       const fill = document.getElementById("vrMeterFill"); if (fill) fill.style.width = "0%";
       setVoiceStage("idle");
     });
-    document.getElementById("vrUseBtn").addEventListener("click", useVoiceSample);
-    document.getElementById("previewSampleBtn").addEventListener("click", previewSample);
-    document.getElementById("clearSampleBtn").addEventListener("click", clearVoiceSample);
-    document.getElementById("sampleBaseSelect").addEventListener("change", e => {
+    document.getElementById("vrUseBtn").addEventListener("click", saveVoiceFromDraft);
+    document.getElementById("vrDeleteBtn").addEventListener("click", deleteCurrentVoice);
+    document.getElementById("vrName").addEventListener("keydown", e => {
+      if (e.key === "Enter") { e.preventDefault(); saveVoiceFromDraft(); }
+    });
+    document.getElementById("vrBase").addEventListener("change", e => {
       voiceSample.baseMidi = parseInt(e.target.value, 10) || 60;
     });
-    document.getElementById("modRatioSlider").addEventListener("input", e => {
-      const v = parseFloat(e.target.value);
-      voiceSample.modRatio = v;
-      document.getElementById("modRatioVal").textContent = v.toFixed(2) + "×";
+    document.getElementById("vrRatio").addEventListener("input", e => {
+      voiceSample.modRatio = parseFloat(e.target.value);
+      document.getElementById("vrRatioVal").textContent = voiceSample.modRatio.toFixed(2) + "×";
     });
-    document.getElementById("modDepthSlider").addEventListener("input", e => {
-      const v = parseFloat(e.target.value);
-      voiceSample.modDepth = v;
-      document.getElementById("modDepthVal").textContent = Math.round(v * 100) + "%";
+    document.getElementById("vrDepth").addEventListener("input", e => {
+      voiceSample.modDepth = parseFloat(e.target.value);
+      document.getElementById("vrDepthVal").textContent = Math.round(voiceSample.modDepth * 100) + "%";
     });
 
-    updateVoiceButton();
+    loadVoiceSamples();
 
 
     /* ================================================================
