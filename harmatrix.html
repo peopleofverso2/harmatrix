@@ -763,6 +763,7 @@
       <input id="bpm" type="number" min="40" max="240" value="110" inputmode="numeric" />
       <select id="arpSelect">
         <option value="off">Arp: off</option>
+        <option value="auto">Arp: auto ✨</option>
         <option value="up">Arp: ↑</option>
         <option value="down">Arp: ↓</option>
         <option value="updown">Arp: ↕</option>
@@ -1735,28 +1736,53 @@
       }
     }
 
+    function autoArpChord(midi) {
+      // Mode "auto" : étend une note seule en accord diatonique (tierces empilées)
+      // construit à partir de la gamme/tonalité courante, pour un arpège automatique.
+      const scaleSet = currentScaleSet();
+      const asc = [];
+      for (let m = midi; m <= midi + 24 && asc.length < 8; m++) {
+        if (scaleSet.has(pitchClass(m))) asc.push(m);
+      }
+      if (asc.length === 0) return [midi];
+      const chord = [asc[0], asc[2], asc[4]].filter(n => n !== undefined);
+      if (asc[7] !== undefined) chord.push(asc[7]); // ~octave : arpège plus ample
+      return chord.length ? chord : [midi];
+    }
+
+    function arpSequence() {
+      // En "auto", une note seule devient un accord arpégé ; plusieurs notes tenues
+      // s'arpègent telles quelles. Les autres modes suivent directement les notes tenues.
+      if (arpMode === "auto") {
+        return arpHold.length === 1 ? autoArpChord(arpHold[0]) : [...arpHold].sort((a, b) => a - b);
+      }
+      return arpHold;
+    }
+
     function pickArpNote() {
-      if (arpHold.length === 0) return null;
+      const seq = arpSequence();
+      if (seq.length === 0) return null;
+      const pattern = arpMode === "auto" ? "up" : arpMode; // l'accord auto est arpégé en montant
       let n;
-      switch (arpMode) {
+      switch (pattern) {
         case "up":
-          n = arpHold[arpIndex % arpHold.length];
-          arpIndex = (arpIndex + 1) % arpHold.length;
+          n = seq[arpIndex % seq.length];
+          arpIndex = (arpIndex + 1) % seq.length;
           break;
         case "down":
-          n = arpHold[(arpHold.length - 1 - (arpIndex % arpHold.length))];
-          arpIndex = (arpIndex + 1) % arpHold.length;
+          n = seq[(seq.length - 1 - (arpIndex % seq.length))];
+          arpIndex = (arpIndex + 1) % seq.length;
           break;
         case "updown":
-          arpIndex = Math.max(0, Math.min(arpHold.length - 1, arpIndex));
-          n = arpHold[arpIndex];
-          if (arpHold.length === 1) break;
+          arpIndex = Math.max(0, Math.min(seq.length - 1, arpIndex));
+          n = seq[arpIndex];
+          if (seq.length === 1) break;
           arpIndex += arpDirection;
-          if (arpIndex >= arpHold.length - 1) { arpIndex = arpHold.length - 1; arpDirection = -1; }
+          if (arpIndex >= seq.length - 1) { arpIndex = seq.length - 1; arpDirection = -1; }
           else if (arpIndex <= 0) { arpIndex = 0; arpDirection = 1; }
           break;
         case "random":
-          n = arpHold[Math.floor(Math.random() * arpHold.length)];
+          n = seq[Math.floor(Math.random() * seq.length)];
           break;
         default: n = null;
       }
