@@ -2907,9 +2907,10 @@
        Voice sampling (microphone) + FM modulation on playback
        ================================================================ */
     let voiceSample = { buffer: null, baseMidi: 60, modRatio: 1.0, modDepth: 0 };
-    let voiceRecorder = null;
-    let voiceRecordChunks = [];
-    let voiceRecordStream = null;
+    // Capture PCM directe (MediaStreamSource -> ScriptProcessor). Fiable sur iOS,
+    // contrairement à MediaRecorder + decodeAudioData (WebKit ne sait pas toujours
+    // redécoder son propre mp4/AAC).
+    let voiceRec = { active: false, source: null, node: null, sink: null, stream: null, chunks: [], length: 0 };
 
     function updateVoiceButton() {
       const btn = document.querySelector('.voice[data-voice="sample"]');
@@ -2919,45 +2920,82 @@
     async function startVoiceRecording() {
       const status = document.getElementById("sampleStatus");
       const btn = document.getElementById("recVoiceBtn");
+      ensureAudio();
       try {
-        voiceRecordStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        voiceRecordChunks = [];
-        voiceRecorder = new MediaRecorder(voiceRecordStream);
-        voiceRecorder.ondataavailable = e => { if (e.data && e.data.size > 0) voiceRecordChunks.push(e.data); };
-        voiceRecorder.onstop = async () => {
-          const blob = new Blob(voiceRecordChunks);
-          const ab = await blob.arrayBuffer();
-          ensureAudio();
-          try {
-            const buffer = await audioCtx.decodeAudioData(ab);
-            voiceSample.buffer = buffer;
-            status.textContent = "✓ " + buffer.duration.toFixed(2) + "s · " + buffer.numberOfChannels + "ch";
-            status.className = "midi-status ok";
-            updateVoiceButton();
-          } catch (err) {
-            status.textContent = "Erreur décodage : " + err.message;
-            status.className = "midi-status err";
-          }
-          if (voiceRecordStream) {
-            voiceRecordStream.getTracks().forEach(t => t.stop());
-            voiceRecordStream = null;
-          }
-          btn.textContent = "🎤 Enregistrer";
-          btn.classList.remove("recording");
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+        });
+        voiceRec.stream = stream;
+        voiceRec.chunks = [];
+        voiceRec.length = 0;
+        voiceRec.active = true;
+        voiceRec.source = audioCtx.createMediaStreamSource(stream);
+
+        const proc = audioCtx.createScriptProcessor(4096, 1, 1);
+        const sink = audioCtx.createGain(); sink.gain.value = 0; // pas de monitoring (évite le larsen)
+        const maxLen = audioCtx.sampleRate * 12; // 12 s max
+        proc.onaudioprocess = (e) => {
+          if (!voiceRec.active) return;
+          const input = e.inputBuffer.getChannelData(0);
+          voiceRec.chunks.push(new Float32Array(input));
+          voiceRec.length += input.length;
+          status.textContent = "Enregistrement… " + (voiceRec.length / audioCtx.sampleRate).toFixed(1) + "s";
+          if (voiceRec.length >= maxLen) stopVoiceRecording();
         };
-        voiceRecorder.start();
+        voiceRec.source.connect(proc);
+        proc.connect(sink).connect(audioCtx.destination);
+        voiceRec.node = proc;
+        voiceRec.sink = sink;
+
         btn.textContent = "■ Stop";
         btn.classList.add("recording");
         status.textContent = "Enregistrement… parle / chante / fais un son";
         status.className = "midi-status";
       } catch (e) {
+        voiceRec.active = false;
         status.textContent = "Accès micro refusé.";
         status.className = "midi-status err";
       }
     }
 
     function stopVoiceRecording() {
-      if (voiceRecorder && voiceRecorder.state === "recording") voiceRecorder.stop();
+      if (!voiceRec.active) return;
+      voiceRec.active = false;
+      const status = document.getElementById("sampleStatus");
+      const btn = document.getElementById("recVoiceBtn");
+
+      try { if (voiceRec.node) voiceRec.node.onaudioprocess = null; } catch (e) {}
+      try { if (voiceRec.node) voiceRec.node.disconnect(); } catch (e) {}
+      try { if (voiceRec.source) voiceRec.source.disconnect(); } catch (e) {}
+      try { if (voiceRec.sink) voiceRec.sink.disconnect(); } catch (e) {}
+      if (voiceRec.stream) { voiceRec.stream.getTracks().forEach(t => t.stop()); voiceRec.stream = null; }
+
+      const len = voiceRec.length;
+      if (len > 0 && audioCtx) {
+        const buffer = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+        const data = buffer.getChannelData(0);
+        let off = 0;
+        for (const chunk of voiceRec.chunks) { data.set(chunk, off); off += chunk.length; }
+        // normalisation douce si le micro est faible (sans amplifier le silence)
+        let peak = 0;
+        for (let i = 0; i < data.length; i++) { const a = Math.abs(data[i]); if (a > peak) peak = a; }
+        if (peak > 0.02 && peak < 0.95) {
+          const g = Math.min(4, 0.9 / peak);
+          for (let i = 0; i < data.length; i++) data[i] *= g;
+        }
+        voiceSample.buffer = buffer;
+        status.textContent = "✓ " + buffer.duration.toFixed(2) + "s · 1ch";
+        status.className = "midi-status ok";
+        updateVoiceButton();
+      } else {
+        status.textContent = "Rien n'a été capté — réessaie.";
+        status.className = "midi-status err";
+      }
+
+      voiceRec.chunks = [];
+      voiceRec.node = null; voiceRec.source = null; voiceRec.sink = null;
+      btn.textContent = "🎤 Enregistrer";
+      btn.classList.remove("recording");
     }
 
     function previewSample() {
@@ -3058,7 +3096,7 @@
     });
 
     document.getElementById("recVoiceBtn").addEventListener("click", () => {
-      if (voiceRecorder && voiceRecorder.state === "recording") stopVoiceRecording();
+      if (voiceRec.active) stopVoiceRecording();
       else startVoiceRecording();
     });
     document.getElementById("previewSampleBtn").addEventListener("click", previewSample);
