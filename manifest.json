@@ -1,0 +1,19 @@
+{
+  "name": "Harmatrix",
+  "short_name": "Harmatrix",
+  "description": "Matrice tactile harmonique — instrument web minimaliste, signé People of Verso.",
+  "lang": "fr",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#08090d",
+  "theme_color": "#08090d",
+  "categories": ["music", "entertainment"],
+  "icons": [
+    { "src": "icon-192.png", "type": "image/png", "sizes": "192x192", "purpose": "any" },
+    { "src": "icon-512.png", "type": "image/png", "sizes": "512x512", "purpose": "any" },
+    { "src": "icon-512.png", "type": "image/png", "sizes": "512x512", "purpose": "maskable" }
+  ]
+}
