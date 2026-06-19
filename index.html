@@ -1050,6 +1050,14 @@
           <label>Canal</label>
           <select id="midiChanSelect"></select>
         </div>
+        <div class="card-row">
+          <label>Synchro</label>
+          <select id="midiSyncSelect">
+            <option value="off">Aucune</option>
+            <option value="master">Maître (envoie l'horloge)</option>
+            <option value="slave">Esclave (suit l'horloge)</option>
+          </select>
+        </div>
         <div class="card-actions">
           <button id="midiRefreshBtn">Rafraîchir devices</button>
         </div>
@@ -1059,6 +1067,10 @@
         <h3>Projet &amp; master</h3>
         <div class="card-actions">
           <button id="masterRecBtn">⏺ Enregistrer le master (.wav)</button>
+        </div>
+        <div class="card-actions">
+          <button id="exportMidiBtn">🎼 Exporter MIDI (.mid)</button>
+          <button id="exportWavBtn">🎵 Exporter l'audio (.wav)</button>
         </div>
         <div class="card-actions">
           <button id="exportBtn">💾 Sauvegarder le projet (.json)</button>
@@ -1936,7 +1948,7 @@
       }
 
       // Step sequencer
-      if (sequencer.playing) {
+      if (sequencer.playing && !sequencer.external) {
         const stepDur = beatDuration() / sequencer.subdivision;
         while (sequencer.nextStepTime < horizon) {
           const stepIdx = sequencer.currentStep;
@@ -2280,7 +2292,7 @@
 
     bpmInput.addEventListener("change", () => {
       const v = parseInt(bpmInput.value, 10);
-      if (v >= 40 && v <= 240) { bpm = v; updateDelayTime(); }
+      if (v >= 40 && v <= 240) { bpm = v; updateDelayTime(); restartMidiClockIfRunning(); }
       else bpmInput.value = bpm;
     });
 
@@ -2644,6 +2656,52 @@
     let midiInput  = null;
     let midiChannel = 0;
 
+    /* ---- Synchro MIDI multi-appareils (horloge 24 PPQN) ---- */
+    let midiSync = "off";          // off | master (envoie l'horloge) | slave (la suit)
+    let midiClockTimer = null;
+    let slavePulses = 0;
+
+    function sendMIDIRealtime(byte) { if (midiOutput) { try { midiOutput.send([byte]); } catch (e) {} } }
+    function startMidiClock() {
+      stopMidiClock();
+      if (midiSync !== "master" || !midiOutput) return;
+      midiClockTimer = setInterval(() => sendMIDIRealtime(0xF8), (60000 / bpm) / 24);
+    }
+    function stopMidiClock() { if (midiClockTimer) { clearInterval(midiClockTimer); midiClockTimer = null; } }
+    function restartMidiClockIfRunning() { if (midiSync === "master" && midiClockTimer) startMidiClock(); }
+
+    function fireSeqStep(stepIdx) {
+      for (let t = 0; t < NUM_PATTERNS; t++) {
+        if (sequencer.trackMuted[t]) continue;
+        const notes = sequencer.patterns[t][stepIdx] || [];
+        const tv = sequencer.trackVoice[t] || voice;
+        notes.forEach(n => scheduleNoteAt(n.midi, n.velocity, n.voice || tv, audioCtx.currentTime + 0.01));
+      }
+    }
+    function slaveStart() {
+      ensureAudio();
+      sequencer.external = true; sequencer.playing = true; sequencer.currentStep = 0; slavePulses = 0;
+      fireSeqStep(0);
+      const btn = document.getElementById("seqPlayBtn");
+      if (btn) { btn.textContent = "■"; btn.classList.add("playing"); }
+      if (!seqAnimId) seqAnimId = requestAnimationFrame(updateSeqVisual);
+      updateTransportUI();
+    }
+    function slaveStop() {
+      sequencer.external = false; sequencer.playing = false;
+      const btn = document.getElementById("seqPlayBtn");
+      if (btn) { btn.textContent = "▶"; btn.classList.remove("playing"); }
+      document.querySelectorAll(".step").forEach(s => s.classList.remove("current"));
+      if (seqAnimId) { cancelAnimationFrame(seqAnimId); seqAnimId = null; }
+      updateTransportUI();
+    }
+    function slaveClockPulse() {
+      if (!sequencer.external || !sequencer.playing) return;
+      slavePulses++;
+      const per = Math.max(1, Math.round(24 / sequencer.subdivision)); // 6 pulses/pas en 1/16
+      if (slavePulses >= per) { slavePulses = 0; sequencer.currentStep = (sequencer.currentStep + 1) % STEPS; fireSeqStep(sequencer.currentStep); }
+    }
+
     function sendMIDINoteOn(note, vel) {
       if (!midiOutput) return;
       const v = Math.max(1, Math.min(127, Math.round(vel * 127)));
@@ -2705,7 +2763,13 @@
     }
 
     function onMIDIMessage(msg) {
-      const [statusByte, note, velocity] = msg.data;
+      const d = msg.data, statusByte = d[0];
+      // Messages temps réel (synchro)
+      if (statusByte === 0xF8) { if (midiSync === "slave") slaveClockPulse(); return; }   // clock
+      if (statusByte === 0xFA) { if (midiSync === "slave") slaveStart(); return; }         // start
+      if (statusByte === 0xFB) { if (midiSync === "slave" && !sequencer.playing) slaveStart(); return; } // continue
+      if (statusByte === 0xFC) { if (midiSync === "slave") slaveStop(); return; }          // stop
+      const note = d[1], velocity = d[2];
       const cmd = statusByte & 0xf0;
       if (cmd === 0x90 && velocity > 0) {
         noteOn(note, velocity / 127);
@@ -2760,6 +2824,86 @@
       } catch (e) {}
       downloadBlob(blob, name);
       hint.textContent = (label || "Fichier prêt") + " — s'il n'apparaît pas, ouvre l'app dans Safari (pas l'aperçu intégré).";
+    }
+
+    /* ===== Export MIDI (.mid) — Standard MIDI File, une piste/canal par couche ===== */
+    function writeVarLen(value) {
+      const bytes = [value & 0x7f];
+      value >>= 7;
+      while (value > 0) { bytes.unshift((value & 0x7f) | 0x80); value >>= 7; }
+      return bytes;
+    }
+    function buildMidiFile() {
+      const PPQN = 96;
+      const stepTicks = Math.max(1, Math.round(PPQN / sequencer.subdivision));
+      const noteLen = Math.max(1, stepTicks - 2);
+      const drumMap = { 48: 36, 50: 38, 52: 42, 53: 46, 51: 39 }; // -> General MIDI (kick/snare/hats/clap)
+      const tracks = [];
+      const mpqn = Math.round(60000000 / bpm);
+      tracks.push([
+        { tick: 0, ord: 0, data: [0xFF, 0x51, 0x03, (mpqn >> 16) & 0xff, (mpqn >> 8) & 0xff, mpqn & 0xff] },
+        { tick: 0, ord: 0, data: [0xFF, 0x58, 0x04, 4, 2, 24, 8] }
+      ]);
+      for (let t = 0; t < NUM_PATTERNS; t++) {
+        const pat = sequencer.patterns[t];
+        if (!pat.some(st => st.length)) continue;
+        const isDrum = sequencer.trackVoice[t] === "drums";
+        const ch = isDrum ? 9 : (t & 0x0f);
+        const ev = [];
+        const name = ("ABCD"[t] || "?") + " " + (voiceLabel(sequencer.trackVoice[t] || voice) || "");
+        const nb = []; for (let i = 0; i < name.length && i < 60; i++) nb.push(name.charCodeAt(i) & 0x7f);
+        ev.push({ tick: 0, ord: 0, data: [0xFF, 0x03, nb.length].concat(nb) });
+        for (let i = 0; i < STEPS; i++) {
+          (pat[i] || []).forEach(n => {
+            let m = n.midi & 0x7f;
+            if (isDrum && drumMap[n.midi] != null) m = drumMap[n.midi];
+            const vel = Math.max(1, Math.min(127, Math.round((n.velocity || 0.8) * 127)));
+            ev.push({ tick: i * stepTicks, ord: 1, data: [0x90 | ch, m, vel] });
+            ev.push({ tick: i * stepTicks + noteLen, ord: 0, data: [0x80 | ch, m, 0] });
+          });
+        }
+        tracks.push(ev);
+      }
+      let bytes = [0x4D, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 1, (tracks.length >> 8) & 0xff, tracks.length & 0xff, (PPQN >> 8) & 0xff, PPQN & 0xff];
+      for (const ev of tracks) {
+        ev.sort((a, b) => a.tick - b.tick || a.ord - b.ord);
+        let trk = [], last = 0;
+        for (const e of ev) { trk = trk.concat(writeVarLen(e.tick - last), e.data); last = e.tick; }
+        trk = trk.concat([0x00, 0xFF, 0x2F, 0x00]);
+        const len = trk.length;
+        bytes = bytes.concat([0x4D, 0x54, 0x72, 0x6B, (len >>> 24) & 0xff, (len >>> 16) & 0xff, (len >>> 8) & 0xff, len & 0xff], trk);
+      }
+      return new Uint8Array(bytes);
+    }
+    function exportMidi() {
+      if (!sequencer.patterns.some(p => p.some(st => st.length))) {
+        hint.textContent = "Séquence vide — crée des notes (🎲 Auto) avant d'exporter le MIDI."; haptics.heavy(); return;
+      }
+      const blob = new Blob([buildMidiFile()], { type: "audio/midi" });
+      saveBlobFile(blob, "harmatrix-" + new Date().toISOString().slice(0, 19).replace(/:/g, "-") + ".mid", "🎼 MIDI prêt");
+      if (haptics.success) haptics.success();
+    }
+
+    /* ===== Export audio (.wav) — rend la séquence (2 boucles + queue) en un clic ===== */
+    let exportWavTimer = null;
+    function exportSongWav() {
+      if (!sequencer.patterns.some(p => p.some(st => st.length))) {
+        hint.textContent = "Séquence vide — crée des notes avant d'exporter l'audio."; haptics.heavy(); return;
+      }
+      ensureAudio();
+      if (exportWavTimer) { clearTimeout(exportWavTimer); exportWavTimer = null; }
+      if (sequencer.playing) toggleSeqPlay();
+      toggleSeqPlay();                       // (re)démarre la séquence au pas 0
+      startMasterRec();
+      const barMs = STEPS * (beatDuration() / sequencer.subdivision) * 1000;
+      const dur = Math.round(barMs * 2 + 1500); // 2 boucles + queue d'effets
+      hint.textContent = "⏺ Rendu audio… (~" + Math.ceil(dur / 1000) + "s, ne touche à rien)";
+      exportWavTimer = setTimeout(() => {
+        exportWavTimer = null;
+        stopMasterRec();
+        if (sequencer.playing) toggleSeqPlay();
+        if (lastTake.blob) saveBlobFile(lastTake.blob, takeFilename(), "🎵 Audio prêt");
+      }, dur);
     }
 
     function updateRecTimer() {
@@ -2990,6 +3134,31 @@
     });
     document.getElementById("masterRecBtn").addEventListener("click", startMasterRec);
     document.getElementById("headerRecBtn").addEventListener("click", () => { if (masterRec.active) stopMasterRec(); else startMasterRec(); });
+    document.getElementById("exportMidiBtn").addEventListener("click", exportMidi);
+    document.getElementById("exportWavBtn").addEventListener("click", exportSongWav);
+    document.getElementById("midiSyncSelect").addEventListener("change", e => {
+      midiSync = e.target.value;
+      stopMidiClock();
+      const ms = document.getElementById("midiStatus");
+      if (midiSync === "master") {
+        if (!midiAccess) initMIDI();
+        if (sequencer.playing && !sequencer.external) { sendMIDIRealtime(0xFA); startMidiClock(); }
+        if (ms) { ms.textContent = "Maître : envoie Start/Stop + horloge (choisis un Output)."; ms.className = "midi-status ok"; }
+      } else if (midiSync === "slave") {
+        if (!midiAccess) initMIDI();
+        if (sequencer.playing && !sequencer.external) {
+          sequencer.playing = false;
+          const b = document.getElementById("seqPlayBtn"); if (b) { b.textContent = "▶"; b.classList.remove("playing"); }
+          if (seqAnimId) { cancelAnimationFrame(seqAnimId); seqAnimId = null; }
+          updateTransportUI();
+        }
+        if (ms) { ms.textContent = "Esclave : lecture pilotée par le maître (choisis un Input)."; ms.className = "midi-status ok"; }
+      } else {
+        if (sequencer.external) slaveStop();
+        if (ms) { ms.textContent = "Synchro désactivée."; ms.className = "midi-status"; }
+      }
+      haptics.medium();
+    });
     audioState.addEventListener("click", () => {
       ensureAudio();
       if (audioCtx && audioCtx.state === "suspended" && audioCtx.resume) audioCtx.resume();
@@ -3494,7 +3663,8 @@
       song: [],               // (déprécié — remplacé par les couches simultanées)
       songPos: 0,
       trackVoice: ["pad", "pluck", "strings", "drums"], // instrument de chaque couche A–D
-      trackMuted: [false, false, false, false]          // couche coupée ?
+      trackMuted: [false, false, false, false],         // couche coupée ?
+      external: false                                   // lecture pilotée par une horloge MIDI externe (esclave)
     };
     sequencer.steps = sequencer.patterns[sequencer.activePattern];
     let seqAnimId = null;
@@ -3769,7 +3939,7 @@
     }
 
     function updateSeqVisual() {
-      const idx = getPlayingStepIndex();
+      const idx = sequencer.external ? sequencer.currentStep : getPlayingStepIndex();
       document.querySelectorAll(".step").forEach((s, i) => {
         s.classList.toggle("current", i === idx);
       });
@@ -3800,6 +3970,7 @@
     }
 
     function toggleSeqPlay() {
+      if (midiSync === "slave") { hint.textContent = "Esclave MIDI : lecture pilotée par le maître (▶ sur l'autre iPhone)."; haptics.heavy(); return; }
       haptics.medium();
       const btn = document.getElementById("seqPlayBtn");
       if (sequencer.playing) {
@@ -3809,8 +3980,10 @@
         document.querySelectorAll(".step").forEach(s => s.classList.remove("current"));
         document.querySelectorAll(".songcell").forEach(s => s.classList.remove("playing"));
         if (seqAnimId) { cancelAnimationFrame(seqAnimId); seqAnimId = null; }
+        if (midiSync === "master") { stopMidiClock(); sendMIDIRealtime(0xFC); }
       } else {
         ensureAudio();
+        sequencer.external = false;
         sequencer.playing = true;
         sequencer.currentStep = 0;
         sequencer.songPos = 0;
@@ -3819,6 +3992,7 @@
         btn.textContent = "■";
         btn.classList.add("playing");
         seqAnimId = requestAnimationFrame(updateSeqVisual);
+        if (midiSync === "master") { sendMIDIRealtime(0xFA); startMidiClock(); }
       }
       updateTransportUI();
     }
