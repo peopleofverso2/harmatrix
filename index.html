@@ -83,7 +83,7 @@
     .sound { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: var(--gap); }
     .sound .voice { padding: 0 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
     .sound .voice.add { color: var(--scale); font-size: 18px; padding: 0; font-weight: 400; }
-    .transport { display: flex; gap: var(--gap); align-items: stretch; }
+    .transport { display: flex; flex-wrap: wrap; gap: var(--gap); align-items: stretch; }
     .transport > * { min-width: 0; }
     .transport > input[type=number] { flex: 0 0 54px; }
     .transport > select { flex: 1 1 0; min-width: 60px; }
@@ -590,6 +590,7 @@
     }
     .pat.on { background: color-mix(in srgb, var(--scale) 45%, #111 55%); color: var(--text); border-color: color-mix(in srgb, var(--scale) 70%, transparent); }
     .pat.has { box-shadow: inset 0 -3px 0 color-mix(in srgb, var(--chord) 70%, transparent); }
+    .pat.muted { opacity: .4; text-decoration: line-through; }
     .seqbtn {
       flex: 1; min-height: 30px; padding: 0 6px;
       border: 1px solid var(--line); background: rgba(255,255,255,.06);
@@ -956,6 +957,12 @@
         <option value="updown">Arp: ↕</option>
         <option value="random">Arp: ⤨</option>
       </select>
+      <select id="arpRateSelect" title="Cadence de l'arpège (synchro tempo)">
+        <option value="1">♩ 1/4</option>
+        <option value="2" selected>♪ 1/8</option>
+        <option value="4">♬ 1/16</option>
+        <option value="3">⅓ triolet</option>
+      </select>
       <button id="recBtn" class="rec idle">● REC</button>
       <button id="clearBtn" title="Effacer la boucle">⌫</button>
     </section>
@@ -973,7 +980,7 @@
     <section class="seq">
       <button id="seqPlayBtn" title="Lancer / stop">▶</button>
       <div class="steps" id="seqSteps"></div>
-      <button id="seqClearAllBtn" title="Effacer toute la séquence">⌫</button>
+      <button id="seqClearAllBtn" title="Effacer la couche sélectionnée">⌫</button>
     </section>
 
     <section class="seqtools">
@@ -985,7 +992,7 @@
       </div>
       <button id="liveRecBtn" class="seqbtn" title="Enregistrement live : joue la grille pendant la lecture">● Live</button>
       <button id="genBtn" class="seqbtn" title="Générer une séquence musicale">🎲 Auto</button>
-      <button id="songBtn" class="seqbtn" title="Mode chanson : enchaîner les patterns">🎵 Song</button>
+      <button id="songBtn" class="seqbtn" title="Couper / activer la couche sélectionnée">🔇 Muet</button>
     </section>
 
     <section class="songbar" id="songBar" hidden>
@@ -1212,6 +1219,7 @@
     let recordStartTime = 0;
 
     let arpMode = "off";
+    let arpRate = 2;       // pas d'arpège par temps : 1=1/4, 2=1/8, 4=1/16, 3=triolet de croche
     let bpm = 110;
     let arpHold = [];
     let arpIndex = 0;
@@ -1857,7 +1865,7 @@
         if (!arpHold.includes(midi)) arpHold.push(midi);
         if (arpHold.length === 1) {
           arpIndex = 0; arpDirection = 1;
-          arpNextTime = audioCtx.currentTime + 0.05;
+          arpNextTime = 0; // se cale sur la prochaine subdivision du tempo (synchro)
         }
         active.set(midi, pitchClass(midi));
         analyse(); paint();
@@ -1909,7 +1917,8 @@
       const horizon = now + 0.12;
 
       if (arpMode !== "off" && arpHold.length > 0) {
-        const step = beatDuration() / 2; // 8th notes
+        const step = beatDuration() / arpRate;              // cadence choisie, synchro tempo
+        if (arpNextTime < now) arpNextTime = Math.ceil(now / step) * step;  // (re)cale sur la grille du beat
         while (arpNextTime < horizon) {
           const n = pickArpNote();
           if (n !== null) {
@@ -1923,7 +1932,7 @@
           arpNextTime += step;
         }
       } else if (arpMode !== "off") {
-        arpNextTime = now + 0.05;
+        arpNextTime = 0; // rien de tenu : on re-calera sur la grille au prochain appui
       }
 
       // Step sequencer
@@ -1931,16 +1940,15 @@
         const stepDur = beatDuration() / sequencer.subdivision;
         while (sequencer.nextStepTime < horizon) {
           const stepIdx = sequencer.currentStep;
-          const inSong = sequencer.songMode && sequencer.song.length > 0;
-          const patIdx = inSong ? sequencer.song[sequencer.songPos % sequencer.song.length] : sequencer.activePattern;
-          const notes = sequencer.patterns[patIdx][stepIdx] || [];
-          notes.forEach(n => {
-            scheduleNoteAt(n.midi, n.velocity, n.voice || voice, sequencer.nextStepTime);
-          });
+          // Multipiste : toutes les couches non-muettes jouent ensemble, chacune son instrument
+          for (let t = 0; t < NUM_PATTERNS; t++) {
+            if (sequencer.trackMuted[t]) continue;
+            const notes = sequencer.patterns[t][stepIdx] || [];
+            const tv = sequencer.trackVoice[t] || voice;
+            notes.forEach(n => scheduleNoteAt(n.midi, n.velocity, n.voice || tv, sequencer.nextStepTime));
+          }
           sequencer.nextStepTime += stepDur;
-          const next = (stepIdx + 1) % STEPS;
-          sequencer.currentStep = next;
-          if (next === 0 && inSong) sequencer.songPos = (sequencer.songPos + 1) % sequencer.song.length;
+          sequencer.currentStep = (stepIdx + 1) % STEPS;
         }
       }
     }
@@ -2254,6 +2262,7 @@
         document.querySelectorAll(".voice").forEach(b => b.classList.remove("on"));
         btn.classList.add("on");
         voice = btn.dataset.voice;
+        assignVoiceToTrackIfSeq();
         if (sequencer.selectedStep >= 0) updateSeqHint();
         haptics.medium();
       });
@@ -2279,6 +2288,9 @@
       arpMode = arpSelect.value;
       if (arpMode !== "off") ensureAudio();
       arpIndex = 0; arpDirection = 1;
+    });
+    document.getElementById("arpRateSelect").addEventListener("change", e => {
+      arpRate = parseFloat(e.target.value) || 2;
     });
 
     recBtn.addEventListener("click", recButtonPressed);
@@ -2445,6 +2457,7 @@
           document.querySelectorAll(".voice").forEach(b => b.classList.remove("on"));
           btn.classList.add("on");
           voice = "fm:" + inst.id;
+          assignVoiceToTrackIfSeq();
           });
         addBtn.parentNode.insertBefore(btn, addBtn);
       });
@@ -2848,13 +2861,14 @@
         instruments: customInstruments,
         voices: voiceSamples.map(v => ({ id: v.id, name: v.name, baseMidi: v.baseMidi, modRatio: v.modRatio, modDepth: v.modDepth, sampleRate: v.sampleRate, pcm: int16ToB64(v.int16) })),
         loop: { events: loopEvents, length: loopLength },
-        sequencer: { patterns: sequencer.patterns, activePattern: sequencer.activePattern, subdivision: sequencer.subdivision, song: sequencer.song, songMode: sequencer.songMode },
+        sequencer: { patterns: sequencer.patterns, activePattern: sequencer.activePattern, subdivision: sequencer.subdivision, trackVoice: sequencer.trackVoice, trackMuted: sequencer.trackMuted },
         settings: {
           root: Number(rootSelect.value),
           mode: modeSelect.value,
           bpm: bpm,
           voice: voice,
           arpMode: arpMode,
+          arpRate: arpRate,
           delaySend: parseFloat(delaySlider.value),
           reverbSend: parseFloat(reverbSlider.value)
         }
@@ -2905,6 +2919,8 @@
             sequencer.activePattern = (typeof sd.activePattern === "number") ? sd.activePattern : 0;
             sequencer.steps = sequencer.patterns[sequencer.activePattern];
             if (sd.subdivision) sequencer.subdivision = sd.subdivision;
+            if (Array.isArray(sd.trackVoice)) sequencer.trackVoice = sd.trackVoice;
+            if (Array.isArray(sd.trackMuted)) sequencer.trackMuted = sd.trackMuted;
             sequencer.song = Array.isArray(sd.song) ? sd.song.filter(x => x >= 0 && x < NUM_PATTERNS) : [];
             sequencer.songMode = !!sd.songMode;
             const sBtn = document.getElementById("songBtn");
@@ -2934,6 +2950,7 @@
               document.querySelectorAll(".voice").forEach(b => b.classList.toggle("on", b.dataset.voice === ss.voice));
             }
             if (ss.arpMode)         { arpMode = ss.arpMode; arpSelect.value = ss.arpMode; }
+            if (ss.arpRate)         { arpRate = ss.arpRate; const ar = document.getElementById("arpRateSelect"); if (ar) ar.value = String(ss.arpRate); }
             if (ss.delaySend != null)  delaySlider.value  = ss.delaySend;
             if (ss.reverbSend != null) reverbSlider.value = ss.reverbSend;
             active.clear();
@@ -3101,6 +3118,7 @@
       const b = document.querySelector('.voice[data-voice="' + vc.replace(/"/g, '\\"') + '"]');
       if (b) b.classList.add("on");
       voice = vc;
+      assignVoiceToTrackIfSeq();
       if (typeof sequencer !== "undefined" && sequencer.selectedStep >= 0) updateSeqHint();
       if (haptics && haptics.medium) haptics.medium();
     }
@@ -3473,8 +3491,10 @@
       subdivision: 4,         // 4 = doubles-croches, 2 = croches
       liveRecord: false,
       songMode: false,
-      song: [],               // suite d'indices de patterns (0..3)
-      songPos: 0
+      song: [],               // (déprécié — remplacé par les couches simultanées)
+      songPos: 0,
+      trackVoice: ["pad", "pluck", "strings", "drums"], // instrument de chaque couche A–D
+      trackMuted: [false, false, false, false]          // couche coupée ?
     };
     sequencer.steps = sequencer.patterns[sequencer.activePattern];
     let seqAnimId = null;
@@ -3547,7 +3567,10 @@
         const p = Number(b.dataset.pat);
         b.classList.toggle("on", p === sequencer.activePattern);
         b.classList.toggle("has", sequencer.patterns[p].some(st => st.length > 0));
+        b.classList.toggle("muted", !!sequencer.trackMuted[p]);
       });
+      const mb = document.getElementById("songBtn");
+      if (mb) mb.classList.toggle("on", !!sequencer.trackMuted[sequencer.activePattern]);
       const addBtn = document.getElementById("songAddBtn");
       if (addBtn) addBtn.textContent = "+ " + ("ABCD"[sequencer.activePattern] || "");
     }
@@ -3556,11 +3579,33 @@
       sequencer.activePattern = i;
       sequencer.steps = sequencer.patterns[i];
       sequencer.selectedStep = -1;
+      const tv = sequencer.trackVoice[i];
+      if (tv) {
+        voice = tv;
+        document.querySelectorAll(".voice").forEach(b => b.classList.toggle("on", b.dataset.voice === voice));
+      }
       updateAllStepUI();
       updatePatternButtons();
       updateSeqHint();
       paint();
       if (!silent) haptics.light();
+    }
+
+    function toggleTrackMute() {
+      const t = sequencer.activePattern;
+      sequencer.trackMuted[t] = !sequencer.trackMuted[t];
+      updatePatternButtons();
+      updateSeqHint();
+      haptics.medium();
+    }
+
+    function assignVoiceToTrackIfSeq() {
+      const app = document.querySelector(".app");
+      if (app && app.dataset.view === "seq" && typeof sequencer !== "undefined") {
+        sequencer.trackVoice[sequencer.activePattern] = voice;
+        updatePatternButtons();
+        if (sequencer.selectedStep < 0) updateSeqHint();
+      }
     }
 
     function nearestPlayingStep() {
@@ -3594,12 +3639,13 @@
     }
 
     /* ----- Random musical ----- */
-    function scaleMidiPool() {
+    function scaleMidiPoolRange(lo, hi) {
       const scale = currentScaleSet();
       const pool = [];
-      for (let m = 55; m <= 84; m++) if (scale.has(((m % 12) + 12) % 12)) pool.push(m);
+      for (let m = lo; m <= hi; m++) if (scale.has(((m % 12) + 12) % 12)) pool.push(m);
       return pool.length ? pool : [60, 62, 64, 65, 67, 69, 71, 72];
     }
+    function scaleMidiPool() { return scaleMidiPoolRange(55, 84); }
 
     function generatePattern() {
       ensureAudio();
@@ -3617,7 +3663,9 @@
           if (i === 15 && Math.random() < 0.3) fresh[i].push(mk(51, 0.6));     // clap de fin
         }
       } else {
-        const pool = scaleMidiPool();
+        const bands = [[55, 79], [43, 67], [60, 84], [50, 74]]; // chaque couche dans un registre distinct
+        const bnd = bands[sequencer.activePattern % bands.length];
+        const pool = scaleMidiPoolRange(bnd[0], bnd[1]);
         const tonicPc = currentTonic();
         const tonics = pool.filter(m => m % 12 === tonicPc);
         let prev = tonics.length ? tonics[Math.floor(tonics.length / 2)] : pool[Math.floor(pool.length / 2)];
@@ -3641,6 +3689,7 @@
         if (!fresh.some(st => st.length)) fresh[0].push(mk(prev));
       }
 
+      sequencer.trackVoice[sequencer.activePattern] = voice; // la couche adopte l'instrument courant
       sequencer.patterns[sequencer.activePattern] = fresh;
       sequencer.steps = fresh;
       sequencer.selectedStep = -1;
@@ -3701,6 +3750,11 @@
         const usedTxt = used.length ? " [" + used.join(" + ") + "]" : "";
         hint.textContent = "Step " + (sequencer.selectedStep + 1) + usedTxt +
           " — tape des cases (instrument : " + voiceLabel(voice) + "). Long-press = effacer.";
+      } else if (document.querySelector(".app").dataset.view === "seq") {
+        const t = sequencer.activePattern;
+        const muted = sequencer.trackMuted[t] ? " · 🔇 muet" : "";
+        chordName.textContent = "Couche " + ("ABCD"[t] || "?") + " · " + voiceLabel(sequencer.trackVoice[t] || voice) + muted;
+        hint.textContent = "Choisis un son puis 🎲 Auto = mélodie juste sur cette couche. Les 4 couches jouent ensemble. Appui long A–D ou 🔇 = couper.";
       } else {
         analyse();
       }
@@ -3771,10 +3825,28 @@
 
     document.getElementById("seqPlayBtn").addEventListener("click", toggleSeqPlay);
     document.getElementById("seqClearAllBtn").addEventListener("click", clearAllSteps);
-    document.querySelectorAll(".pat").forEach(b => b.addEventListener("click", () => selectPattern(Number(b.dataset.pat))));
+    document.querySelectorAll(".pat").forEach(b => {
+      const p = Number(b.dataset.pat);
+      let lpTimer = null, lpFired = false;
+      b.addEventListener("pointerdown", () => {
+        lpFired = false;
+        lpTimer = setTimeout(() => {
+          lpFired = true;
+          sequencer.trackMuted[p] = !sequencer.trackMuted[p];
+          if (p === sequencer.activePattern) updateSeqHint();
+          updatePatternButtons();
+          haptics.medium();
+        }, 500);
+      });
+      const cancel = () => { if (lpTimer) clearTimeout(lpTimer); lpTimer = null; };
+      b.addEventListener("pointerup", cancel);
+      b.addEventListener("pointerleave", cancel);
+      b.addEventListener("pointercancel", cancel);
+      b.addEventListener("click", () => { if (lpFired) { lpFired = false; return; } selectPattern(p); });
+    });
     document.getElementById("liveRecBtn").addEventListener("click", toggleLiveRecord);
     document.getElementById("genBtn").addEventListener("click", generatePattern);
-    document.getElementById("songBtn").addEventListener("click", toggleSongMode);
+    document.getElementById("songBtn").addEventListener("click", toggleTrackMute);
     document.getElementById("songAddBtn").addEventListener("click", () => { sequencer.song.push(sequencer.activePattern); renderSong(); haptics.light(); });
     document.getElementById("songClearBtn").addEventListener("click", () => { sequencer.song = []; renderSong(); });
     document.getElementById("seqStopPill").addEventListener("click", () => { if (sequencer.playing) toggleSeqPlay(); });
