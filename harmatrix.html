@@ -949,6 +949,7 @@
       <button class="voice" data-voice="drums">Rythme</button>
       <button class="voice layerbtn" id="layerBtn" title="Empiler : jouer plusieurs instruments à la fois">⛓ Empiler</button>
       <button class="voice layerbtn" id="chantBtn" title="Mode Chant : ta voix chante l'arpège auto, accordée">🎤 Chant</button>
+      <button class="voice layerbtn" id="vocoderBtn" title="Vocodeur live : chante dans le micro, ta voix suit l'arpège (au casque)">🎙️ Vocodeur</button>
       <button class="voice" data-voice="sample" title="Créer une voix">🎤 Voix +</button>
       <button class="voice add" id="fmAddBtn" title="Créer un instrument FM" aria-label="Créer un instrument FM">+</button>
     </section>
@@ -1211,6 +1212,8 @@
     let layerMode = false;       // empiler plusieurs instruments en live
     let liveStack = ["pad"];     // instruments joués simultanément (le 1er = principal pour arp/séquence)
     let chantMode = false;       // mode Chant : la voix chante l'arpège auto, accordée
+    let vocoderMode = false;     // vocodeur live : voix micro façonnée par les notes de l'arpège
+    let vocoder = { stream: null, mic: null, carrier: null, carrierGain: null, out: null, bands: [] };
 
     const pointerNotes = new Map(); // pointerId -> { midi, padEl, handle, startY }
 
@@ -1952,21 +1955,26 @@
         while (arpNextTime < horizon) {
           const n = pickArpNote();
           if (n !== null) {
-            const aVel = (arpMode === "wander") ? (0.5 + Math.random() * 0.4) : 0.7; // humanisation en mode aléa
-            const arpVoices = (layerMode && liveStack.length > 1) ? liveStack : [voice]; // l'arp suit l'empilage
-            arpVoices.forEach(v => {
-              scheduleNoteAt(n, aVel, v, arpNextTime);
-              if (loopMode === "recording" || loopMode === "overdubbing") {
-                const t = arpNextTime - recordStartTime;
-                const eventT = loopLength > 0 ? ((t % loopLength) + loopLength) % loopLength : t;
-                loopEvents.push({ t: eventT, midi: n, velocity: aVel, voice: v });
-              }
-            });
+            if (vocoderMode && vocoder.carrier) {
+              vocoderSetNote(n, arpNextTime);   // la porteuse suit l'arpège ; le micro la façonne
+            } else {
+              const aVel = (arpMode === "wander") ? (0.5 + Math.random() * 0.4) : 0.7; // humanisation en mode aléa
+              const arpVoices = (layerMode && liveStack.length > 1) ? liveStack : [voice]; // l'arp suit l'empilage
+              arpVoices.forEach(v => {
+                scheduleNoteAt(n, aVel, v, arpNextTime);
+                if (loopMode === "recording" || loopMode === "overdubbing") {
+                  const t = arpNextTime - recordStartTime;
+                  const eventT = loopLength > 0 ? ((t % loopLength) + loopLength) % loopLength : t;
+                  loopEvents.push({ t: eventT, midi: n, velocity: aVel, voice: v });
+                }
+              });
+            }
           }
           arpNextTime += step;
         }
       } else if (arpMode !== "off") {
         arpNextTime = 0; // rien de tenu : on re-calera sur la grille au prochain appui
+        if (vocoderMode && vocoder.carrierGain) vocoderGateOff(); // coupe la porteuse quand rien n'est tenu
       }
 
       // Step sequencer
@@ -2351,12 +2359,92 @@
       if (haptics && haptics.medium) haptics.medium();
     }
 
+    /* ===== Vocodeur live : voix micro (modulateur) façonnée par la porteuse (notes de l'arp) ===== */
+    async function startVocoder() {
+      ensureAudio();
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return false;
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+      } catch (e) { return false; }
+      vocoder.stream = stream;
+      vocoder.mic = audioCtx.createMediaStreamSource(stream);
+      vocoder.out = audioCtx.createGain(); vocoder.out.gain.value = 1.0; vocoder.out.connect(master);
+      vocoder.carrierGain = audioCtx.createGain(); vocoder.carrierGain.gain.value = 0; // porte ouverte par les notes tenues
+      const c1 = audioCtx.createOscillator(); c1.type = "sawtooth";
+      const c2 = audioCtx.createOscillator(); c2.type = "sawtooth"; c2.detune.value = 7;
+      const cmix = audioCtx.createGain(); cmix.gain.value = 0.5;
+      c1.connect(cmix); c2.connect(cmix); cmix.connect(vocoder.carrierGain);
+      c1.start(); c2.start();
+      vocoder.carrier = { c1, c2 };
+      // courbe de redressement |x| (suiveur d'enveloppe)
+      const N = 1024, abs = new Float32Array(N);
+      for (let i = 0; i < N; i++) { const x = (i / (N - 1)) * 2 - 1; abs[i] = Math.abs(x); }
+      const centers = [180, 270, 400, 580, 820, 1150, 1600, 2200, 3000, 4200, 5800, 8000];
+      vocoder.bands = centers.map(f => {
+        const Q = 5;
+        const modBP = audioCtx.createBiquadFilter(); modBP.type = "bandpass"; modBP.frequency.value = f; modBP.Q.value = Q;
+        const rect = audioCtx.createWaveShaper(); rect.curve = abs;
+        const envLP = audioCtx.createBiquadFilter(); envLP.type = "lowpass"; envLP.frequency.value = 28;
+        const envGain = audioCtx.createGain(); envGain.gain.value = 18;
+        const carBP = audioCtx.createBiquadFilter(); carBP.type = "bandpass"; carBP.frequency.value = f; carBP.Q.value = Q;
+        const bandGain = audioCtx.createGain(); bandGain.gain.value = 0;
+        vocoder.mic.connect(modBP); modBP.connect(rect); rect.connect(envLP); envLP.connect(envGain);
+        envGain.connect(bandGain.gain);                          // l'enveloppe du micro pilote le gain de la bande
+        vocoder.carrierGain.connect(carBP); carBP.connect(bandGain); bandGain.connect(vocoder.out);
+        return { modBP, rect, envLP, envGain, carBP, bandGain };
+      });
+      return true;
+    }
+    function vocoderSetNote(midi, atTime) {
+      if (!vocoder.carrier) return;
+      const f = midiToFreq(midi);
+      vocoder.carrier.c1.frequency.setValueAtTime(f, atTime);
+      vocoder.carrier.c2.frequency.setValueAtTime(f, atTime);
+      vocoder.carrierGain.gain.setTargetAtTime(0.9, atTime, 0.008);
+    }
+    function vocoderGateOff() {
+      if (vocoder.carrierGain && audioCtx) vocoder.carrierGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.06);
+    }
+    function stopVocoder() {
+      try { vocoderGateOff(); } catch (e) {}
+      const t = audioCtx ? audioCtx.currentTime : 0;
+      try { if (vocoder.carrier) { vocoder.carrier.c1.stop(t + 0.2); vocoder.carrier.c2.stop(t + 0.2); } } catch (e) {}
+      try { if (vocoder.mic) vocoder.mic.disconnect(); } catch (e) {}
+      vocoder.bands.forEach(b => { for (const k in b) { try { b[k].disconnect(); } catch (e) {} } });
+      try { if (vocoder.out) vocoder.out.disconnect(); } catch (e) {}
+      if (vocoder.stream) { vocoder.stream.getTracks().forEach(tr => tr.stop()); vocoder.stream = null; }
+      vocoder.bands = []; vocoder.mic = null; vocoder.carrier = null; vocoder.carrierGain = null; vocoder.out = null;
+    }
+    async function toggleVocoder() {
+      ensureAudio();
+      if (vocoderMode) {
+        vocoderMode = false;
+        stopVocoder();
+        arpMode = "off"; if (arpSelect) arpSelect.value = "off";
+        if (hold) { hold = false; if (holdBtn) holdBtn.textContent = "Hold: off"; active.clear(); pointerNotes.clear(); arpHold = []; analyse(); paint(); }
+        const vb = document.getElementById("vocoderBtn"); if (vb) vb.classList.remove("on");
+        hint.textContent = "🎙️ Vocodeur OFF.";
+        return;
+      }
+      hint.textContent = "🎙️ Vocodeur : autorise le micro…";
+      const ok = await startVocoder();
+      if (!ok) { hint.textContent = "🎙️ Vocodeur : micro indisponible ou refusé."; return; }
+      vocoderMode = true;
+      arpMode = "auto"; if (arpSelect) arpSelect.value = "auto"; arpIndex = 0; arpDirection = 1;
+      if (!hold) { hold = true; if (holdBtn) holdBtn.textContent = "Hold: on"; }
+      const vb = document.getElementById("vocoderBtn"); if (vb) vb.classList.add("on");
+      hint.textContent = "🎙️ Vocodeur ON — tiens une note et CHANTE dans le micro (au casque !). Ta voix chante l'arpège, accordée.";
+      if (haptics && haptics.success) haptics.success();
+    }
+
     /* ========= UI wire ========= */
     document.querySelectorAll(".voice").forEach(btn => {
       btn.addEventListener("click", () => {
         if (btn.classList.contains("add")) return;
         if (btn.id === "layerBtn") { toggleLayer(); return; }
         if (btn.id === "chantBtn") { toggleChant(); return; }
+        if (btn.id === "vocoderBtn") { toggleVocoder(); return; }
         // 🎤 Voice : si aucun échantillon, ouvre l'enregistreur guidé au lieu de sélectionner du vide
         if (btn.dataset.voice === "sample") { openVoiceRecorder(); return; }
         chooseInstrument(btn.dataset.voice);
