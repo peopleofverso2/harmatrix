@@ -948,6 +948,7 @@
       <button class="voice" data-voice="brass">Cuivres</button>
       <button class="voice" data-voice="drums">Rythme</button>
       <button class="voice layerbtn" id="layerBtn" title="Empiler : jouer plusieurs instruments à la fois">⛓ Empiler</button>
+      <button class="voice layerbtn" id="chantBtn" title="Mode Chant : ta voix chante l'arpège auto, accordée">🎤 Chant</button>
       <button class="voice" data-voice="sample" title="Créer une voix">🎤 Voix +</button>
       <button class="voice add" id="fmAddBtn" title="Créer un instrument FM" aria-label="Créer un instrument FM">+</button>
     </section>
@@ -1209,6 +1210,7 @@
     let voice = "pad";
     let layerMode = false;       // empiler plusieurs instruments en live
     let liveStack = ["pad"];     // instruments joués simultanément (le 1er = principal pour arp/séquence)
+    let chantMode = false;       // mode Chant : la voix chante l'arpège auto, accordée
 
     const pointerNotes = new Map(); // pointerId -> { midi, padEl, handle, startY }
 
@@ -2296,7 +2298,7 @@
     /* ========= UI wire ========= */
     function refreshInstrumentHighlight() {
       document.querySelectorAll(".voice").forEach(b => {
-        if (b.classList.contains("add") || b.id === "layerBtn") return;
+        if (b.classList.contains("add") || b.classList.contains("layerbtn")) return;
         b.classList.toggle("on", liveStack.indexOf(b.dataset.voice) >= 0);
       });
     }
@@ -2325,11 +2327,36 @@
       if (haptics && haptics.medium) haptics.medium();
     }
 
+    function toggleChant() {
+      ensureAudio();
+      if (!voiceSamples.length) {
+        hint.textContent = "🎤 Mode Chant : enregistre d'abord une voix (🎤 Voix +), puis réactive-le.";
+        openVoiceRecorder();
+        return;
+      }
+      chantMode = !chantMode;
+      const cb = document.getElementById("chantBtn");
+      if (cb) cb.classList.toggle("on", chantMode);
+      if (chantMode) {
+        const v = voiceSamples[voiceSamples.length - 1];   // la voix la plus récente
+        chooseInstrument("voice:" + v.id);                 // ta voix devient l'instrument joué
+        arpMode = "auto"; if (arpSelect) arpSelect.value = "auto"; arpIndex = 0; arpDirection = 1;
+        if (!hold) { hold = true; if (holdBtn) holdBtn.textContent = "Hold: on"; }
+        hint.textContent = "🎤 Chant ON — tape/tiens une note : ta voix « " + v.name + " » chante l'accord, accordée et en rythme. (Arp auto + Hold)";
+      } else {
+        arpMode = "off"; if (arpSelect) arpSelect.value = "off";
+        if (hold) { hold = false; if (holdBtn) holdBtn.textContent = "Hold: off"; active.clear(); pointerNotes.clear(); arpHold = []; analyse(); paint(); }
+        hint.textContent = "🎤 Chant OFF.";
+      }
+      if (haptics && haptics.medium) haptics.medium();
+    }
+
     /* ========= UI wire ========= */
     document.querySelectorAll(".voice").forEach(btn => {
       btn.addEventListener("click", () => {
         if (btn.classList.contains("add")) return;
         if (btn.id === "layerBtn") { toggleLayer(); return; }
+        if (btn.id === "chantBtn") { toggleChant(); return; }
         // 🎤 Voice : si aucun échantillon, ouvre l'enregistreur guidé au lieu de sélectionner du vide
         if (btn.dataset.voice === "sample") { openVoiceRecorder(); return; }
         chooseInstrument(btn.dataset.voice);
