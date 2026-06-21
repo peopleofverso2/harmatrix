@@ -625,7 +625,7 @@
     .app[data-view="play"] .seqtools,
     .app[data-view="play"] .songbar { display: none !important; }
     .masterbar {
-      position: fixed; left: 50%; bottom: max(70px, calc(env(safe-area-inset-bottom) + 60px));
+      position: fixed; left: 50%; bottom: max(8px, env(safe-area-inset-bottom));
       transform: translateX(-50%); z-index: 50;
       display: flex; align-items: center; gap: 10px;
       padding: 10px 14px; border-radius: 999px;
@@ -638,7 +638,7 @@
     .masterbar .rectxt { color: #fff; font-size: 12px; font-weight: 700; }
     .masterbar > button { width: auto; flex: 0 0 auto; border: 1px solid #ff8b8b; background: rgba(255,59,59,.25); color: #fff; border-radius: 999px; padding: 7px 12px; font-weight: 800; font-size: 12px; font-family: inherit; white-space: nowrap; }
     .takebar {
-      position: fixed; left: 50%; bottom: max(70px, calc(env(safe-area-inset-bottom) + 60px));
+      position: fixed; left: 50%; bottom: max(8px, env(safe-area-inset-bottom));
       transform: translateX(-50%); z-index: 55;
       display: flex; align-items: center; gap: 8px;
       background: rgba(10,22,16,.96); border: 1px solid #2f9e6e; border-radius: 999px;
@@ -692,6 +692,7 @@
     /* Les barres flottantes ne bloquent plus la grille : seuls leurs boutons captent les touchers */
     .masterbar, .takebar { pointer-events: none; }
     .masterbar button, .takebar button { pointer-events: auto; }
+    .fx[hidden] { display: none !important; }   /* sinon .fx{display:grid} écrase l'attribut hidden (curseur Voco) */
     /* ===================== Thème « Liquid Glass » ===================== */
     /* Lueurs colorées diffuses en fond : donnent de la matière à réfracter au verre */
     body {
@@ -1041,7 +1042,7 @@
 
   <div class="masterbar" id="masterRecBar" hidden>
     <span class="recdot"></span>
-    <span class="rectxt">Enregistrement… tout ce que tu entends est capté</span>
+    <span class="rectxt">Enregistrement…</span>
     <button id="masterStopBtn">⏹ Arrêter</button>
   </div>
   <div class="takebar" id="takeBar" hidden>
