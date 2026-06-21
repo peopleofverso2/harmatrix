@@ -2372,7 +2372,7 @@
       vocoder.mic = audioCtx.createMediaStreamSource(stream);
       vocoder.analyser = audioCtx.createAnalyser(); vocoder.analyser.fftSize = 512;
       vocoder.mic.connect(vocoder.analyser);   // pour le vumètre micro (diagnostic)
-      vocoder.out = audioCtx.createGain(); vocoder.out.gain.value = 1.0; vocoder.out.connect(master);
+      vocoder.out = audioCtx.createGain(); vocoder.out.gain.value = 3.6; vocoder.out.connect(master); // gain de compensation (vocodeur faible par nature)
       vocoder.carrierGain = audioCtx.createGain(); vocoder.carrierGain.gain.value = 0; // porte ouverte par les notes tenues
       const c1 = audioCtx.createOscillator(); c1.type = "sawtooth";
       const c2 = audioCtx.createOscillator(); c2.type = "sawtooth"; c2.detune.value = 7;
@@ -2389,7 +2389,7 @@
         const modBP = audioCtx.createBiquadFilter(); modBP.type = "bandpass"; modBP.frequency.value = f; modBP.Q.value = Q;
         const rect = audioCtx.createWaveShaper(); rect.curve = abs;
         const envLP = audioCtx.createBiquadFilter(); envLP.type = "lowpass"; envLP.frequency.value = 50; // enveloppe plus rapide = articulation
-        const envGain = audioCtx.createGain(); envGain.gain.value = 22;
+        const envGain = audioCtx.createGain(); envGain.gain.value = 30;
         const carBP = audioCtx.createBiquadFilter(); carBP.type = "bandpass"; carBP.frequency.value = f; carBP.Q.value = Q;
         const bandGain = audioCtx.createGain(); bandGain.gain.value = 0;
         vocoder.mic.connect(modBP); modBP.connect(rect); rect.connect(envLP); envLP.connect(envGain);
