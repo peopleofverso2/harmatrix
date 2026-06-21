@@ -63,10 +63,11 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       min-height: 32px;
     }
-    h1 { font-size: clamp(15px, 5.2vw, 22px); margin: 0; letter-spacing: -.03em; line-height: 1.05; }
+    header > div:first-child { min-width: 0; flex: 0 1 auto; overflow: hidden; }
+    h1 { font-size: clamp(15px, 5.2vw, 22px); margin: 0; letter-spacing: -.03em; line-height: 1.05; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .sub { color: var(--muted); font-size: 11px; margin-top: 2px; display: none; }
     .badge {
       border: 1px solid var(--line);
@@ -458,7 +459,7 @@
       justify-content: center;
       font-family: inherit;
     }
-    .header-right { display: flex; gap: 8px; align-items: center; min-width: 0; }
+    .header-right { display: flex; gap: 8px; align-items: center; flex: 0 0 auto; min-width: 0; }
     .header-right .badge { overflow: hidden; text-overflow: ellipsis; max-width: 84px; }
     #audioState { max-width: none; overflow: visible; cursor: pointer; flex: 0 0 auto; }
     #audioState.on { color: var(--chord); border-color: color-mix(in srgb, var(--chord) 55%, transparent); }
@@ -467,7 +468,7 @@
       border-radius: 9px; height: 32px; padding: 0 10px;
       font-size: 13px; font-weight: 800; font-family: inherit; white-space: nowrap;
       font-variant-numeric: tabular-nums; flex: 0 0 auto;
-      min-width: 96px; display: inline-flex; align-items: center; justify-content: center;
+      min-width: 0; width: auto; display: inline-flex; align-items: center; justify-content: center;
     }
     .recbtn-header.recording { background: #d11; border-color: #ff8b8b; animation: recPulse 1s ease-in-out infinite; }
     .card h3 {
