@@ -689,6 +689,9 @@
     /* Aucune barre flottante ne peut dépasser l'écran (sinon elle élargit la page et décale tout) */
     .seqstoppill, .liverecpill, .masterbar, .takebar { max-width: calc(100vw - 16px); box-sizing: border-box; }
     .liverecpill { white-space: normal; text-align: center; line-height: 1.2; }
+    /* Les barres flottantes ne bloquent plus la grille : seuls leurs boutons captent les touchers */
+    .masterbar, .takebar { pointer-events: none; }
+    .masterbar button, .takebar button { pointer-events: auto; }
     /* ===================== Thème « Liquid Glass » ===================== */
     /* Lueurs colorées diffuses en fond : donnent de la matière à réfracter au verre */
     body {
