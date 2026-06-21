@@ -956,6 +956,7 @@
       <select id="arpSelect">
         <option value="off">Arp: off</option>
         <option value="auto">Arp: auto ✨</option>
+        <option value="wander">Arp: aléa ✨</option>
         <option value="up">Arp: ↑</option>
         <option value="down">Arp: ↓</option>
         <option value="updown">Arp: ↕</option>
@@ -1941,11 +1942,12 @@
         while (arpNextTime < horizon) {
           const n = pickArpNote();
           if (n !== null) {
-            scheduleNoteAt(n, 0.7, voice, arpNextTime);
+            const aVel = (arpMode === "wander") ? (0.5 + Math.random() * 0.4) : 0.7; // humanisation en mode aléa
+            scheduleNoteAt(n, aVel, voice, arpNextTime);
             if (loopMode === "recording" || loopMode === "overdubbing") {
               const t = arpNextTime - recordStartTime;
               const eventT = loopLength > 0 ? ((t % loopLength) + loopLength) % loopLength : t;
-              loopEvents.push({ t: eventT, midi: n, velocity: 0.7, voice });
+              loopEvents.push({ t: eventT, midi: n, velocity: aVel, voice });
             }
           }
           arpNextTime += step;
@@ -1989,7 +1991,7 @@
     function arpSequence() {
       // En "auto", une note seule devient un accord arpégé ; plusieurs notes tenues
       // s'arpègent telles quelles. Les autres modes suivent directement les notes tenues.
-      if (arpMode === "auto") {
+      if (arpMode === "auto" || arpMode === "wander") {
         return arpHold.length === 1 ? autoArpChord(arpHold[0]) : [...arpHold].sort((a, b) => a - b);
       }
       return arpHold;
@@ -1998,6 +2000,14 @@
     function pickArpNote() {
       const seq = arpSequence();
       if (seq.length === 0) return null;
+      if (arpMode === "wander") {
+        // Aléatoire musical : pool déjà en gamme (notes tenues / accord auto), donc toujours accordé.
+        // Calé sur la grille (cadence gérée par le scheduler). Silences + sauts d'octave pour varier.
+        if (Math.random() < 0.18) return null;                              // silence rythmique
+        let n = seq[Math.floor(Math.random() * seq.length)];
+        if (Math.random() < 0.30) n += (Math.random() < 0.5 ? 12 : -12);    // octave (même classe → reste en gamme)
+        return Math.max(36, Math.min(96, n));
+      }
       const pattern = arpMode === "auto" ? "up" : arpMode; // l'accord auto est arpégé en montant
       let n;
       switch (pattern) {
