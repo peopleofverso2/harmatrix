@@ -2907,13 +2907,24 @@
       if (haptics.success) haptics.success();
     }
 
-    /* ===== Export audio (.wav) — rend la séquence (2 boucles + queue) en un clic ===== */
+    /* ===== Export audio (.wav) — séquence rendue, OU enregistrement du jeu live ===== */
     let exportWavTimer = null;
     function exportSongWav() {
-      if (!sequencer.patterns.some(p => p.some(st => st.length))) {
-        hint.textContent = "Séquence vide — crée des notes avant d'exporter l'audio."; haptics.heavy(); return;
-      }
       ensureAudio();
+      // Déjà en train d'enregistrer (live) -> on arrête et on récupère le .wav
+      if (masterRec.active) {
+        if (exportWavTimer) { clearTimeout(exportWavTimer); exportWavTimer = null; }
+        stopMasterRec();
+        if (lastTake.blob) saveBlobFile(lastTake.blob, takeFilename(), "🎵 Audio prêt");
+        return;
+      }
+      // Pas de séquence -> on enregistre ce que tu joues en DIRECT (le ■ en haut, ou re-tape, arrête)
+      if (!sequencer.patterns.some(p => p.some(st => st.length))) {
+        startMasterRec();
+        hint.textContent = "● J'enregistre ce que tu joues — joue sur la grille, puis tape ■ (en haut) pour arrêter et garder le .wav.";
+        return;
+      }
+      // Séquence présente -> rendu automatique (2 boucles + queue)
       if (exportWavTimer) { clearTimeout(exportWavTimer); exportWavTimer = null; }
       if (sequencer.playing) toggleSeqPlay();
       toggleSeqPlay();                       // (re)démarre la séquence au pas 0
@@ -2971,8 +2982,12 @@
       if (lastTake && lastTake.blob) {
         try { const ab = await lastTake.blob.arrayBuffer(); files.push({ name: "harmatrix-" + ts + ".wav", data: new Uint8Array(ab) }); } catch (e) {}
       }
-      const desc = files.map(f => f.name.split(".").pop().toUpperCase()).join(" + ");
-      saveBlobFile(makeZip(files), "harmatrix-" + ts + ".zip", "📦 ZIP (" + desc + ") prêt");
+      const exts = files.map(f => f.name.split(".").pop().toUpperCase());
+      const onlyProject = exts.length === 1 && exts[0] === "JSON";
+      const label = onlyProject
+        ? "📦 ZIP = projet seul. Pour l'audio : enregistre avec ● REC d'abord. Pour le MIDI : crée une séquence (vue Séquence + 🎲)."
+        : "📦 ZIP (" + exts.join(" + ") + ") prêt";
+      saveBlobFile(makeZip(files), "harmatrix-" + ts + ".zip", label);
       if (haptics.success) haptics.success();
     }
 
