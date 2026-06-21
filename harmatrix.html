@@ -980,6 +980,10 @@
       <label><span>Reverb</span><input id="reverbSlider" type="range" min="0" max="0.7" step="0.01" value="0.32" /></label>
     </section>
 
+    <section class="fx" id="vocLevelRow" hidden>
+      <label style="grid-column: 1 / -1;"><span>🎙️ Voco</span><input id="vocLevelSlider" type="range" min="0" max="8" step="0.1" value="3.6" /></label>
+    </section>
+
     <section class="viewtabs">
       <button class="vtab on" data-view="play">🎹 Jouer</button>
       <button class="vtab" data-view="seq">🎛 Séquence</button>
@@ -1214,6 +1218,7 @@
     let chantMode = false;       // mode Chant : la voix chante l'arpège auto, accordée
     let vocoderMode = false;     // vocodeur live : voix micro façonnée par les notes de l'arpège
     let vocoder = { stream: null, mic: null, carrier: null, carrierGain: null, out: null, bands: [] };
+    let vocoderLevel = 3.6;      // niveau de sortie du vocodeur (curseur live)
 
     const pointerNotes = new Map(); // pointerId -> { midi, padEl, handle, startY }
 
@@ -2372,7 +2377,7 @@
       vocoder.mic = audioCtx.createMediaStreamSource(stream);
       vocoder.analyser = audioCtx.createAnalyser(); vocoder.analyser.fftSize = 512;
       vocoder.mic.connect(vocoder.analyser);   // pour le vumètre micro (diagnostic)
-      vocoder.out = audioCtx.createGain(); vocoder.out.gain.value = 3.6; vocoder.out.connect(master); // gain de compensation (vocodeur faible par nature)
+      vocoder.out = audioCtx.createGain(); vocoder.out.gain.value = vocoderLevel; vocoder.out.connect(master); // gain de compensation (réglable en live)
       vocoder.carrierGain = audioCtx.createGain(); vocoder.carrierGain.gain.value = 0; // porte ouverte par les notes tenues
       const c1 = audioCtx.createOscillator(); c1.type = "sawtooth";
       const c2 = audioCtx.createOscillator(); c2.type = "sawtooth"; c2.detune.value = 7;
@@ -2446,6 +2451,7 @@
         arpMode = "off"; if (arpSelect) arpSelect.value = "off";
         if (hold) { hold = false; if (holdBtn) holdBtn.textContent = "Hold: off"; active.clear(); pointerNotes.clear(); arpHold = []; analyse(); paint(); }
         const vb = document.getElementById("vocoderBtn"); if (vb) vb.classList.remove("on");
+        const vr = document.getElementById("vocLevelRow"); if (vr) vr.hidden = true;
         hint.textContent = "🎙️ Vocodeur OFF.";
         return;
       }
@@ -2456,6 +2462,8 @@
       arpMode = "auto"; if (arpSelect) arpSelect.value = "auto"; arpIndex = 0; arpDirection = 1;
       if (!hold) { hold = true; if (holdBtn) holdBtn.textContent = "Hold: on"; }
       const vb = document.getElementById("vocoderBtn"); if (vb) vb.classList.add("on");
+      const vr = document.getElementById("vocLevelRow"); if (vr) vr.hidden = false;
+      const vs = document.getElementById("vocLevelSlider"); if (vs) vs.value = String(vocoderLevel);
       vocoderMeterLoop();   // vumètre micro : vérifie que ta voix est bien captée
       if (haptics && haptics.success) haptics.success();
     }
@@ -2506,6 +2514,10 @@
     });
     reverbSlider.addEventListener("input", () => {
       if (reverbWetGain) reverbWetGain.gain.setTargetAtTime(parseFloat(reverbSlider.value), audioCtx.currentTime, 0.05);
+    });
+    document.getElementById("vocLevelSlider").addEventListener("input", e => {
+      vocoderLevel = parseFloat(e.target.value) || 0;
+      if (vocoder.out && audioCtx) vocoder.out.gain.setTargetAtTime(vocoderLevel, audioCtx.currentTime, 0.03);
     });
 
     document.body.addEventListener("touchmove", e => {
