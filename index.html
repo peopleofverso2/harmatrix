@@ -1110,6 +1110,15 @@
         <div class="midi-status">Le master capte tout ce que tu entends (instruments, séquenceur, effets) en .wav. Le projet (.json) sauvegarde patterns, chanson, instruments FM, voix et réglages.</div>
       </section>
       <section class="card">
+        <h3>Mes projets</h3>
+        <div class="card-row">
+          <input id="projName" type="text" placeholder="Nom du projet" maxlength="24" style="flex:1; height:36px; border:1px solid var(--line); background:rgba(255,255,255,.06); color:var(--text); border-radius:10px; padding:0 10px; font-family:inherit;" />
+          <button id="saveProjBtn" style="flex:0 0 92px;">💾 Sauver</button>
+        </div>
+        <div id="projList" style="margin-top:8px; display:flex; flex-direction:column; gap:6px;"></div>
+        <div class="midi-status">Les projets sont stockés dans l'app (pas un fichier). Rouvre-en un quand tu veux pour continuer à l'éditer.</div>
+      </section>
+      <section class="card">
         <h3>Retour haptique</h3>
         <div class="card-row">
           <label>Vibration</label>
@@ -1977,12 +1986,20 @@
         while (arpNextTime < horizon) {
           const n = pickArpNote();
           if (n !== null && !vocoderMode) {   // en vocodeur : accord soutenu (vocoderUpdateChord), pas d'arpège
-            const aVel = (arpMode === "wander") ? (0.5 + Math.random() * 0.4) : 0.7; // humanisation en mode aléa
+            // Naturel : accent sur les temps + léger swing sur les contretemps + micro-humanisation
+            const stepIdx = Math.round(arpNextTime / step);
+            const onBeat = (stepIdx % arpRate) === 0;
+            const swing = (stepIdx % 2 === 1) ? step * 0.14 : 0;
+            const at = arpNextTime + swing;
+            const base = (arpMode === "wander")
+              ? (onBeat ? 0.74 : 0.46) + Math.random() * 0.18
+              : (onBeat ? 0.85 : 0.6) + Math.random() * 0.08;
+            const aVel = Math.max(0.2, Math.min(1, base));
             const arpVoices = (layerMode && liveStack.length > 1) ? liveStack : [voice]; // l'arp suit l'empilage
             arpVoices.forEach(v => {
-              scheduleNoteAt(n, aVel, v, arpNextTime);
+              scheduleNoteAt(n, aVel, v, at);
               if (loopMode === "recording" || loopMode === "overdubbing") {
-                const t = arpNextTime - recordStartTime;
+                const t = at - recordStartTime;
                 const eventT = loopLength > 0 ? ((t % loopLength) + loopLength) % loopLength : t;
                 loopEvents.push({ t: eventT, midi: n, velocity: aVel, voice: v });
               }
@@ -3339,12 +3356,9 @@
       saveBlobFile(blob, "harmatrix-" + new Date().toISOString().slice(0, 19).replace(/:/g, "-") + ".json", "💾 Projet prêt");
     }
 
-    function importStateFromFile(file) {
-      const reader = new FileReader();
-      reader.onload = e => {
-        try {
-          const data = JSON.parse(e.target.result);
-          if (data.version !== 1) throw new Error("version inconnue : " + data.version);
+    function applyProjectState(data) {
+      if (!data || data.version !== 1) throw new Error("version inconnue : " + (data && data.version));
+      {
           if (Array.isArray(data.instruments)) {
             customInstruments = data.instruments;
             saveCustomInstruments();
@@ -3412,10 +3426,13 @@
             paint(); analyse();
             if (audioCtx) updateDelayTime();
           }
-          alert("Import OK.");
-        } catch (err) {
-          alert("Erreur import : " + err.message);
-        }
+      }
+    }
+    function importStateFromFile(file) {
+      const reader = new FileReader();
+      reader.onload = e => {
+        try { applyProjectState(JSON.parse(e.target.result)); alert("Import OK."); }
+        catch (err) { alert("Erreur import : " + err.message); }
       };
       reader.readAsText(file);
     }
@@ -3500,6 +3517,8 @@
     }
     document.getElementById("masterStopBtn").addEventListener("click", stopMasterRec);
     document.getElementById("exportBtn").addEventListener("click", exportState);
+    document.getElementById("saveProjBtn").addEventListener("click", saveNamedProject);
+    document.getElementById("projName").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); saveNamedProject(); } });
     document.getElementById("importBtn").addEventListener("click", () => document.getElementById("importFile").click());
     document.getElementById("importFile").addEventListener("change", e => {
       const file = e.target.files[0];
@@ -3558,8 +3577,12 @@
       return new Promise((res, rej) => {
         if (_vdb) return res(_vdb);
         let r;
-        try { r = indexedDB.open("harmatrix", 1); } catch (e) { return rej(e); }
-        r.onupgradeneeded = () => { const db = r.result; if (!db.objectStoreNames.contains("voices")) db.createObjectStore("voices", { keyPath: "id" }); };
+        try { r = indexedDB.open("harmatrix", 2); } catch (e) { return rej(e); }
+        r.onupgradeneeded = () => {
+          const db = r.result;
+          if (!db.objectStoreNames.contains("voices")) db.createObjectStore("voices", { keyPath: "id" });
+          if (!db.objectStoreNames.contains("projects")) db.createObjectStore("projects", { keyPath: "name" });
+        };
         r.onsuccess = () => { _vdb = r.result; res(_vdb); };
         r.onerror = () => rej(r.error);
       });
@@ -3568,6 +3591,56 @@
     async function vdbPut(v) { try { const db = await vdb(); await new Promise((res, rej) => { const tx = db.transaction("voices", "readwrite"); tx.objectStore("voices").put(voiceRecord(v)); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); } catch (e) {} }
     async function vdbDelete(id) { try { const db = await vdb(); await new Promise((res, rej) => { const tx = db.transaction("voices", "readwrite"); tx.objectStore("voices").delete(id); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); } catch (e) {} }
     async function vdbGetAll() { try { const db = await vdb(); return await new Promise((res, rej) => { const tx = db.transaction("voices", "readonly"); const rq = tx.objectStore("voices").getAll(); rq.onsuccess = () => res(rq.result || []); rq.onerror = () => rej(rq.error); }); } catch (e) { return []; } }
+
+    /* --- bibliothèque de projets (IndexedDB) --- */
+    async function projPut(rec) { try { const db = await vdb(); await new Promise((res, rej) => { const tx = db.transaction("projects", "readwrite"); tx.objectStore("projects").put(rec); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); } catch (e) {} }
+    async function projDelete(name) { try { const db = await vdb(); await new Promise((res, rej) => { const tx = db.transaction("projects", "readwrite"); tx.objectStore("projects").delete(name); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); } catch (e) {} }
+    async function projGetAll() { try { const db = await vdb(); return await new Promise((res, rej) => { const tx = db.transaction("projects", "readonly"); const rq = tx.objectStore("projects").getAll(); rq.onsuccess = () => res(rq.result || []); rq.onerror = () => rej(rq.error); }); } catch (e) { return []; } }
+
+    async function saveNamedProject() {
+      const inp = document.getElementById("projName");
+      const name = ((inp && inp.value) || "").trim() || ("Projet " + new Date().toISOString().slice(0, 16).replace("T", " "));
+      await projPut({ name, data: buildProjectState(), savedAt: new Date().toISOString() });
+      if (inp) inp.value = "";
+      await refreshProjectList();
+      hint.textContent = "💾 Projet « " + name + " » sauvegardé — tu peux le rouvrir et l'éditer plus tard.";
+      if (haptics.success) haptics.success();
+    }
+    async function loadNamedProject(name) {
+      const all = await projGetAll();
+      const p = all.find(x => x.name === name);
+      if (!p) return;
+      try { applyProjectState(p.data); } catch (e) { hint.textContent = "Erreur chargement : " + e.message; return; }
+      const sm = document.getElementById("settingsModal"); if (sm) sm.hidden = true;
+      hint.textContent = "📂 Projet « " + name + " » chargé — édite-le librement.";
+      if (haptics.success) haptics.success();
+    }
+    async function deleteNamedProject(name) {
+      await projDelete(name);
+      await refreshProjectList();
+      if (haptics.medium) haptics.medium();
+    }
+    async function refreshProjectList() {
+      const el = document.getElementById("projList");
+      if (!el) return;
+      const all = await projGetAll();
+      all.sort((a, b) => (b.savedAt || "").localeCompare(a.savedAt || ""));
+      if (!all.length) { el.innerHTML = '<div class="midi-status" style="margin:0;">Aucun projet sauvegardé pour l\'instant.</div>'; return; }
+      el.innerHTML = "";
+      all.forEach(p => {
+        const row = document.createElement("div"); row.className = "card-row";
+        const load = document.createElement("button");
+        load.textContent = "📂 " + p.name; load.title = "Ouvrir et éditer";
+        load.style.flex = "1"; load.style.textAlign = "left"; load.style.overflow = "hidden"; load.style.textOverflow = "ellipsis"; load.style.whiteSpace = "nowrap";
+        load.addEventListener("click", () => loadNamedProject(p.name));
+        const del = document.createElement("button");
+        del.textContent = "🗑"; del.className = "delete-btn"; del.title = "Supprimer";
+        del.style.flex = "0 0 44px"; del.style.padding = "0";
+        del.addEventListener("click", () => deleteNamedProject(p.name));
+        row.appendChild(load); row.appendChild(del);
+        el.appendChild(row);
+      });
+    }
 
     async function loadVoiceSamples() {
       const recs = await vdbGetAll();
@@ -3954,6 +4027,7 @@
     });
 
     loadVoiceSamples();
+    refreshProjectList();
 
 
     /* ================================================================
@@ -4153,23 +4227,48 @@
         const tonics = pool.filter(m => m % 12 === tonicPc);
         let prev = tonics.length ? tonics[Math.floor(tonics.length / 2)] : pool[Math.floor(pool.length / 2)];
         const density = 0.4 + Math.random() * 0.3;
-        for (let i = 0; i < STEPS; i++) {
+        const half = Math.floor(STEPS / 2);
+        // 1) première moitié = un motif (marche mélodique, pas-à-pas privilégié, accents sur les temps)
+        for (let i = 0; i < half; i++) {
           const strong = i % 4 === 0;
           const p = strong ? density + 0.25 : density * 0.55;
           if (Math.random() < p) {
             const near = pool.filter(m => Math.abs(m - prev) <= 5);
-            const choice = (near.length && Math.random() < 0.75)
+            const choice = (near.length && Math.random() < 0.8)        // surtout des pas conjoints = plus mélodique
               ? near[Math.floor(Math.random() * near.length)]
               : pool[Math.floor(Math.random() * pool.length)];
-            fresh[i].push(mk(choice));
+            const vel = Math.min(1, (strong ? 0.82 : 0.6) + Math.random() * 0.12);
+            fresh[i].push(mk(choice, vel));
             prev = choice;
-            if (strong && Math.random() < 0.28) {
+            if (strong && Math.random() < 0.25) {
               const harm = pool.filter(m => (m - choice === 3 || m - choice === 4 || m - choice === 7));
-              if (harm.length) fresh[i].push(mk(harm[0]));
+              if (harm.length) fresh[i].push(mk(harm[0], vel * 0.8));
             }
           }
         }
-        if (!fresh.some(st => st.length)) fresh[0].push(mk(prev));
+        // 2) seconde moitié = on rejoue le motif avec de petites variations (réponse) -> plus naturel/structuré
+        for (let i = half; i < STEPS; i++) {
+          const src = fresh[i - half];
+          if (src.length) {
+            src.forEach(n => {
+              let m = n.midi;
+              if (Math.random() < 0.30) {                              // variation : note voisine dans la gamme
+                const nb = pool.filter(x => Math.abs(x - m) <= 3 && x !== m);
+                if (nb.length) m = nb[Math.floor(Math.random() * nb.length)];
+              }
+              fresh[i].push(mk(m, n.velocity));
+              prev = m;
+            });
+          } else if (Math.random() < 0.12) {                           // quelques notes de passage pour respirer
+            const nb = pool.filter(x => Math.abs(x - prev) <= 4);
+            if (nb.length) { const c = nb[Math.floor(Math.random() * nb.length)]; fresh[i].push(mk(c, 0.5 + Math.random() * 0.15)); prev = c; }
+          }
+        }
+        // 3) résolution : poser la tonique sur le dernier temps fort (cadence)
+        if (tonics.length && Math.random() < 0.7) {
+          fresh[STEPS - 4] = [mk(tonics[Math.floor(tonics.length / 2)], 0.85)];
+        }
+        if (!fresh.some(st => st.length)) fresh[0].push(mk(prev, 0.8));
       }
 
       sequencer.trackVoice[sequencer.activePattern] = voice; // la couche adopte l'instrument courant
