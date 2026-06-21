@@ -994,6 +994,10 @@
     <section class="fx">
       <label><span>Delay</span><input id="delaySlider" type="range" min="0" max="0.7" step="0.01" value="0" /></label>
       <label><span>Reverb</span><input id="reverbSlider" type="range" min="0" max="0.7" step="0.01" value="0.32" /></label>
+      <label><span>Disto</span><input id="distoSlider" type="range" min="0" max="1" step="0.01" value="0" /></label>
+      <label><span>Chorus</span><input id="chorusSlider" type="range" min="0" max="1" step="0.01" value="0" /></label>
+      <label><span>Flanger</span><input id="flangerSlider" type="range" min="0" max="1" step="0.01" value="0" /></label>
+      <label><span>Phaser</span><input id="phaserSlider" type="range" min="0" max="1" step="0.01" value="0" /></label>
     </section>
 
     <section class="fx" id="vocLevelRow" hidden>
@@ -1340,6 +1344,85 @@
       return ir;
     }
 
+    /* ===== Rack d'effets (inséré sur le bus master) ===== */
+    let fxRack = null;
+    function makeDistortion(ctx) {
+      const inp = ctx.createGain(), out = ctx.createGain();
+      const dryG = ctx.createGain(); dryG.gain.value = 1;
+      const pre = ctx.createGain(); pre.gain.value = 1;
+      const shaper = ctx.createWaveShaper(); shaper.oversample = "2x"; shaper.curve = makeSatCurve(1.6);
+      const wetG = ctx.createGain(); wetG.gain.value = 0;
+      inp.connect(dryG).connect(out);
+      inp.connect(pre).connect(shaper).connect(wetG).connect(out);
+      return { in: inp, out, setAmount(a) { dryG.gain.value = 1 - 0.85 * a; wetG.gain.value = a; pre.gain.value = 1 + a * 4; shaper.curve = makeSatCurve(1.6 + a * 40); } };
+    }
+    function makeChorus(ctx) {
+      const inp = ctx.createGain(), out = ctx.createGain();
+      const dry = ctx.createGain(); dry.gain.value = 1;
+      const wet = ctx.createGain(); wet.gain.value = 0;
+      const dA = ctx.createDelay(0.05); dA.delayTime.value = 0.013;
+      const dB = ctx.createDelay(0.05); dB.delayTime.value = 0.021;
+      const pA = ctx.createStereoPanner(); pA.pan.value = -0.7;
+      const pB = ctx.createStereoPanner(); pB.pan.value = 0.7;
+      const lA = ctx.createOscillator(); lA.type = "sine"; lA.frequency.value = 0.25;
+      const lB = ctx.createOscillator(); lB.type = "sine"; lB.frequency.value = 0.19;
+      const gA = ctx.createGain(); gA.gain.value = 0.004; const gB = ctx.createGain(); gB.gain.value = 0.005;
+      lA.connect(gA).connect(dA.delayTime); lB.connect(gB).connect(dB.delayTime); lA.start(); lB.start();
+      inp.connect(dry).connect(out);
+      inp.connect(dA).connect(pA).connect(wet); inp.connect(dB).connect(pB).connect(wet); wet.connect(out);
+      return { in: inp, out, setAmount(a) { wet.gain.value = a * 0.9; } };
+    }
+    function makeFlanger(ctx) {
+      const inp = ctx.createGain(), out = ctx.createGain();
+      const dry = ctx.createGain(); dry.gain.value = 1;
+      const wet = ctx.createGain(); wet.gain.value = 0;
+      const dl = ctx.createDelay(0.02); dl.delayTime.value = 0.003;
+      const fb = ctx.createGain(); fb.gain.value = 0.3;
+      const lfo = ctx.createOscillator(); lfo.type = "sine"; lfo.frequency.value = 0.3;
+      const lg = ctx.createGain(); lg.gain.value = 0.002;
+      lfo.connect(lg).connect(dl.delayTime); lfo.start();
+      inp.connect(dl); dl.connect(fb).connect(dl);   // boucle de feedback (délai = node autorisé)
+      inp.connect(dry).connect(out);
+      dl.connect(wet).connect(out);
+      return { in: inp, out, setAmount(a) { wet.gain.value = a; fb.gain.value = 0.2 + a * 0.55; lg.gain.value = 0.0015 + a * 0.0035; } };
+    }
+    function makePhaser(ctx) {
+      const inp = ctx.createGain(), out = ctx.createGain();
+      const dry = ctx.createGain(); dry.gain.value = 1;
+      const wet = ctx.createGain(); wet.gain.value = 0;
+      const lfo = ctx.createOscillator(); lfo.type = "sine"; lfo.frequency.value = 0.4;
+      const lg = ctx.createGain(); lg.gain.value = 700;
+      const stages = [];
+      let prev = inp;
+      [350, 700, 1400, 2400].forEach(f => {
+        const ap = ctx.createBiquadFilter(); ap.type = "allpass"; ap.frequency.value = f; ap.Q.value = 0.6;
+        lg.connect(ap.frequency);
+        prev.connect(ap); prev = ap; stages.push(ap);
+      });
+      lfo.connect(lg); lfo.start();
+      inp.connect(dry).connect(out);
+      prev.connect(wet).connect(out);
+      return { in: inp, out, setAmount(a) { wet.gain.value = a; } };
+    }
+    function buildFxRack(input) {
+      const disto = makeDistortion(audioCtx), chorus = makeChorus(audioCtx), flanger = makeFlanger(audioCtx), phaser = makePhaser(audioCtx);
+      input.connect(disto.in);
+      disto.out.connect(chorus.in);
+      chorus.out.connect(flanger.in);
+      flanger.out.connect(phaser.in);
+      fxRack = { disto, chorus, flanger, phaser };
+      applyRackFromSliders();
+      return phaser.out;
+    }
+    function applyRackFromSliders() {
+      if (!fxRack) return;
+      const g = id => { const el = document.getElementById(id); return el ? parseFloat(el.value) || 0 : 0; };
+      fxRack.disto.setAmount(g("distoSlider"));
+      fxRack.chorus.setAmount(g("chorusSlider"));
+      fxRack.flanger.setAmount(g("flangerSlider"));
+      fxRack.phaser.setAmount(g("phaserSlider"));
+    }
+
     function ensureAudio() {
       if (!audioCtx) {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -1397,8 +1480,11 @@
         chorusIn.connect(chB).connect(panB).connect(chorusWet);
         chorusWet.connect(busOut);
 
+        // Rack d'effets inséré sur le bus (Disto -> Chorus -> Flanger -> Phaser)
+        const rackOut = buildFxRack(busOut);
+
         dry = audioCtx.createGain(); dry.gain.value = 0.9;
-        busOut.connect(dry).connect(limiter);
+        rackOut.connect(dry).connect(limiter);
 
         // Reverb send
         const wetHP = audioCtx.createBiquadFilter();
@@ -1407,7 +1493,7 @@
         reverb.buffer = buildReverbIR(audioCtx);
         reverbWetGain = audioCtx.createGain();
         reverbWetGain.gain.value = parseFloat(reverbSlider.value);
-        busOut.connect(wetHP).connect(reverb).connect(reverbWetGain).connect(limiter);
+        rackOut.connect(wetHP).connect(reverb).connect(reverbWetGain).connect(limiter);
 
         // Stereo ping-pong delay
         const merger = audioCtx.createChannelMerger(2);
@@ -1420,7 +1506,7 @@
         delayWet = audioCtx.createGain(); delayWet.gain.value = parseFloat(delaySlider.value);
 
         const delayIn = audioCtx.createGain(); delayIn.gain.value = 1;
-        busOut.connect(delayIn);
+        rackOut.connect(delayIn);
         delayIn.connect(delayL);
         delayL.connect(delayR);
         delayR.connect(delayFB).connect(delayL);
@@ -2576,6 +2662,12 @@
     reverbSlider.addEventListener("input", () => {
       if (reverbWetGain) reverbWetGain.gain.setTargetAtTime(parseFloat(reverbSlider.value), audioCtx.currentTime, 0.05);
     });
+    [["distoSlider", "disto"], ["chorusSlider", "chorus"], ["flangerSlider", "flanger"], ["phaserSlider", "phaser"]].forEach(([id, key]) => {
+      document.getElementById(id).addEventListener("input", e => {
+        ensureAudio();
+        if (fxRack) fxRack[key].setAmount(parseFloat(e.target.value) || 0);
+      });
+    });
     document.getElementById("vocLevelSlider").addEventListener("input", e => {
       vocoderLevel = parseFloat(e.target.value) || 0;
       if (vocoder.out && audioCtx) vocoder.out.gain.setTargetAtTime(vocoderLevel, audioCtx.currentTime, 0.03);
@@ -3464,7 +3556,13 @@
           arpMode: arpMode,
           arpRate: arpRate,
           delaySend: parseFloat(delaySlider.value),
-          reverbSend: parseFloat(reverbSlider.value)
+          reverbSend: parseFloat(reverbSlider.value),
+          fx: {
+            disto: parseFloat(document.getElementById("distoSlider").value),
+            chorus: parseFloat(document.getElementById("chorusSlider").value),
+            flanger: parseFloat(document.getElementById("flangerSlider").value),
+            phaser: parseFloat(document.getElementById("phaserSlider").value)
+          }
         }
       };
     }
@@ -3539,6 +3637,12 @@
             if (ss.arpRate)         { arpRate = ss.arpRate; const ar = document.getElementById("arpRateSelect"); if (ar) ar.value = String(ss.arpRate); }
             if (ss.delaySend != null)  delaySlider.value  = ss.delaySend;
             if (ss.reverbSend != null) reverbSlider.value = ss.reverbSend;
+            if (ss.fx) {
+              const setFx = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = v; };
+              setFx("distoSlider", ss.fx.disto); setFx("chorusSlider", ss.fx.chorus);
+              setFx("flangerSlider", ss.fx.flanger); setFx("phaserSlider", ss.fx.phaser);
+              applyRackFromSliders();
+            }
             active.clear();
             paint(); analyse();
             if (audioCtx) updateDelayTime();
