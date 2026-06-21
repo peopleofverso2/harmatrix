@@ -169,9 +169,10 @@
       justify-content: center;
       min-height: 0;
       overflow: hidden;
+      container-type: size;        /* permet à la grille de se dimensionner sur la plus petite dimension */
     }
     .grid {
-      width: 100%;
+      width: min(100%, 100cqh);    /* plus grand carré qui tient (largeur OU hauteur) -> jamais rogné */
       max-width: 100%;
       aspect-ratio: 1 / 1;
       max-height: 100%;
@@ -654,6 +655,15 @@
     .takebar .takelabel { flex: 1 1 auto; min-width: 0; text-align: center; overflow: hidden; text-overflow: ellipsis; }
     .app > * { flex: 0 0 auto; }
     .app > .gridWrap { flex: 1 1 auto; min-height: 0; }
+    /* Mode compact : on masque les réglages pour agrandir la grille */
+    .app[data-compact="1"] .controls,
+    .app[data-compact="1"] .sound,
+    .app[data-compact="1"] .transport,
+    .app[data-compact="1"] .fx,
+    .app[data-compact="1"] #vocLevelRow,
+    .app[data-compact="1"] .seqtools,
+    .app[data-compact="1"] .songbar { display: none !important; }
+    #collapseBtn.on { color: var(--scale); border-color: color-mix(in srgb, var(--scale) 55%, transparent); }
     .seqstoppill {
       position: fixed; left: 50%; bottom: max(14px, env(safe-area-inset-bottom));
       transform: translateX(-50%); z-index: 49;
@@ -924,6 +934,7 @@
       <div class="header-right">
         <div class="badge" id="audioState" role="button" tabindex="0" title="Activer le son">🔊 Activer</div>
         <button id="headerRecBtn" class="recbtn-header" title="Enregistrer l'audio (tout ce que tu entends)">● REC</button>
+        <button id="collapseBtn" class="icon-btn" title="Masquer/afficher les réglages — plus de place pour la grille" aria-label="Plein écran grille">⤢</button>
         <button id="settingsBtn" class="icon-btn" title="Réglages MIDI / Sauvegarde" aria-label="Réglages">⚙</button>
       </div>
     </header>
@@ -3418,6 +3429,15 @@
     document.getElementById("settingsBtn").addEventListener("click", () => {
       document.getElementById("settingsModal").hidden = false;
       if (!midiAccess) initMIDI();
+    });
+    document.getElementById("collapseBtn").addEventListener("click", () => {
+      const app = document.querySelector(".app");
+      const compact = app.dataset.compact === "1";
+      app.dataset.compact = compact ? "0" : "1";
+      const b = document.getElementById("collapseBtn");
+      b.classList.toggle("on", !compact);
+      b.textContent = compact ? "⤢" : "⤡";
+      if (haptics && haptics.light) haptics.light();
     });
     document.getElementById("settingsCloseBtn").addEventListener("click", () => {
       document.getElementById("settingsModal").hidden = true;
