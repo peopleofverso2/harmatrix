@@ -966,6 +966,7 @@
       <button class="voice layerbtn" id="chantBtn" title="Mode Chant : ta voix chante l'arpège auto, accordée">🎤 Chant</button>
       <button class="voice layerbtn" id="vocoderBtn" title="Vocodeur live : chante dans le micro, ta voix suit l'arpège (au casque)">🎙️ Vocodeur</button>
       <button class="voice" data-voice="sample" title="Créer une voix">🎤 Voix +</button>
+      <button class="voice layerbtn" id="libBtn" title="Bibliothèque de sons : presets prêts à l'emploi">📚 Sons</button>
       <button class="voice add" id="fmAddBtn" title="Créer un instrument FM" aria-label="Créer un instrument FM">+</button>
     </section>
 
@@ -1196,6 +1197,15 @@
 
       <p class="vr-status" id="vrStatus"></p>
     </div>
+  </div>
+
+  <div class="modal" id="libModal" hidden>
+    <div class="modal-header">
+      <button id="libCloseBtn" title="Fermer">←</button>
+      <h2>Bibliothèque de sons</h2>
+      <span></span>
+    </div>
+    <div class="modal-body" id="libBody"></div>
   </div>
 
 
@@ -2525,6 +2535,7 @@
         if (btn.id === "layerBtn") { toggleLayer(); return; }
         if (btn.id === "chantBtn") { toggleChant(); return; }
         if (btn.id === "vocoderBtn") { toggleVocoder(); return; }
+        if (btn.id === "libBtn") { openLibrary(); return; }
         // 🎤 Voice : si aucun échantillon, ouvre l'enregistreur guidé au lieu de sélectionner du vide
         if (btn.dataset.voice === "sample") { openVoiceRecorder(); return; }
         chooseInstrument(btn.dataset.voice);
@@ -2610,6 +2621,112 @@
           { ratio: 3.00, level: 0.30, atk: 0.002, dec: 0.18, sus: 0.10, rel: 0.30, detune: 0, feedback: 0.10 }
         ]
       };
+    }
+
+    /* ===== Bibliothèque de sons : presets FM prêts à l'emploi ===== */
+    const SOUND_PRESETS = [
+      { cat: "Basses", name: "Sub", algo: 0, ops: [
+        { ratio: 1, level: 1.0, atk: 0.006, dec: 0.5, sus: 0.7, rel: 0.3, detune: 0 },
+        { ratio: 1, level: 0.3, atk: 0.005, dec: 0.3, sus: 0.2, rel: 0.25, detune: 0 },
+        { ratio: 1, level: 0.0, atk: 0.005, dec: 0.2, sus: 0.0, rel: 0.2, detune: 0 },
+        { ratio: 2, level: 0.18, atk: 0.005, dec: 0.15, sus: 0.0, rel: 0.2, detune: 0, feedback: 0.12 } ] },
+      { cat: "Basses", name: "Synth Bass", algo: 1, ops: [
+        { ratio: 1, level: 1.0, atk: 0.004, dec: 0.35, sus: 0.45, rel: 0.25, detune: 0 },
+        { ratio: 2, level: 0.6, atk: 0.003, dec: 0.2, sus: 0.15, rel: 0.2, detune: 0 },
+        { ratio: 1, level: 0.5, atk: 0.003, dec: 0.2, sus: 0.2, rel: 0.2, detune: 0 },
+        { ratio: 1, level: 0.4, atk: 0.003, dec: 0.15, sus: 0.1, rel: 0.2, detune: 0, feedback: 0.22 } ] },
+      { cat: "Claviers", name: "Piano élec", algo: 2, ops: [
+        { ratio: 1, level: 1.0, atk: 0.002, dec: 0.9, sus: 0.0, rel: 0.5, detune: 0 },
+        { ratio: 1, level: 0.45, atk: 0.002, dec: 0.45, sus: 0.0, rel: 0.3, detune: 0 },
+        { ratio: 1, level: 0.9, atk: 0.002, dec: 1.3, sus: 0.0, rel: 0.6, detune: 0 },
+        { ratio: 14, level: 0.22, atk: 0.001, dec: 0.1, sus: 0.0, rel: 0.1, detune: 0 } ] },
+      { cat: "Claviers", name: "Clavinet", algo: 0, ops: [
+        { ratio: 1, level: 1.0, atk: 0.002, dec: 0.28, sus: 0.0, rel: 0.15, detune: 0 },
+        { ratio: 3, level: 0.5, atk: 0.002, dec: 0.2, sus: 0.0, rel: 0.15, detune: 0 },
+        { ratio: 1, level: 0.4, atk: 0.002, dec: 0.2, sus: 0.0, rel: 0.15, detune: 0 },
+        { ratio: 2, level: 0.3, atk: 0.002, dec: 0.15, sus: 0.0, rel: 0.12, detune: 0, feedback: 0.3 } ] },
+      { cat: "Leads", name: "Lead", algo: 0, ops: [
+        { ratio: 1, level: 1.0, atk: 0.01, dec: 0.2, sus: 0.85, rel: 0.2, detune: 0 },
+        { ratio: 2, level: 0.5, atk: 0.01, dec: 0.2, sus: 0.6, rel: 0.2, detune: 4 },
+        { ratio: 1, level: 0.4, atk: 0.01, dec: 0.2, sus: 0.5, rel: 0.2, detune: -4 },
+        { ratio: 1, level: 0.3, atk: 0.01, dec: 0.2, sus: 0.4, rel: 0.2, detune: 0, feedback: 0.25 } ] },
+      { cat: "Leads", name: "Flûte", algo: 1, ops: [
+        { ratio: 1, level: 1.0, atk: 0.05, dec: 0.2, sus: 0.9, rel: 0.25, detune: 0 },
+        { ratio: 1, level: 0.25, atk: 0.06, dec: 0.2, sus: 0.5, rel: 0.25, detune: 0 },
+        { ratio: 2, level: 0.15, atk: 0.06, dec: 0.2, sus: 0.4, rel: 0.25, detune: 0 },
+        { ratio: 1, level: 0.1, atk: 0.05, dec: 0.2, sus: 0.3, rel: 0.25, detune: 0 } ] },
+      { cat: "Plucks", name: "Pluck", algo: 0, ops: [
+        { ratio: 1, level: 1.0, atk: 0.002, dec: 0.25, sus: 0.0, rel: 0.2, detune: 0 },
+        { ratio: 2, level: 0.6, atk: 0.002, dec: 0.15, sus: 0.0, rel: 0.15, detune: 0 },
+        { ratio: 3, level: 0.3, atk: 0.002, dec: 0.1, sus: 0.0, rel: 0.1, detune: 0 },
+        { ratio: 1, level: 0.2, atk: 0.002, dec: 0.1, sus: 0.0, rel: 0.1, detune: 0, feedback: 0.1 } ] },
+      { cat: "Plucks", name: "Marimba", algo: 2, ops: [
+        { ratio: 1, level: 1.0, atk: 0.002, dec: 0.4, sus: 0.0, rel: 0.3, detune: 0 },
+        { ratio: 4, level: 0.35, atk: 0.002, dec: 0.12, sus: 0.0, rel: 0.1, detune: 0 },
+        { ratio: 1, level: 0.6, atk: 0.002, dec: 0.5, sus: 0.0, rel: 0.3, detune: 0 },
+        { ratio: 9, level: 0.12, atk: 0.001, dec: 0.08, sus: 0.0, rel: 0.08, detune: 0 } ] },
+      { cat: "Cloches", name: "Cloche", algo: 3, ops: [
+        { ratio: 1, level: 1.0, atk: 0.002, dec: 1.8, sus: 0.0, rel: 1.4, detune: 0 },
+        { ratio: 1.41, level: 0.5, atk: 0.002, dec: 1.4, sus: 0.0, rel: 1.1, detune: 0 },
+        { ratio: 2.76, level: 0.4, atk: 0.002, dec: 1.0, sus: 0.0, rel: 0.9, detune: 0 },
+        { ratio: 5.0, level: 0.5, atk: 0.001, dec: 0.6, sus: 0.0, rel: 0.5, detune: 0 } ] },
+      { cat: "Cloches", name: "Carillon", algo: 5, ops: [
+        { ratio: 1, level: 0.8, atk: 0.001, dec: 1.2, sus: 0.0, rel: 1.0, detune: 0 },
+        { ratio: 3, level: 0.5, atk: 0.001, dec: 0.9, sus: 0.0, rel: 0.8, detune: 0 },
+        { ratio: 5, level: 0.35, atk: 0.001, dec: 0.7, sus: 0.0, rel: 0.6, detune: 0 },
+        { ratio: 7, level: 0.25, atk: 0.001, dec: 0.5, sus: 0.0, rel: 0.4, detune: 0 } ] },
+      { cat: "Nappes", name: "Nappe chaude", algo: 5, ops: [
+        { ratio: 1, level: 0.8, atk: 0.6, dec: 0.5, sus: 0.9, rel: 1.3, detune: -5 },
+        { ratio: 2, level: 0.3, atk: 0.8, dec: 0.5, sus: 0.7, rel: 1.3, detune: 5 },
+        { ratio: 3, level: 0.15, atk: 1.0, dec: 0.5, sus: 0.5, rel: 1.3, detune: 0 },
+        { ratio: 1, level: 0.5, atk: 0.7, dec: 0.5, sus: 0.8, rel: 1.3, detune: 8 } ] },
+      { cat: "Nappes", name: "Nappe verre", algo: 3, ops: [
+        { ratio: 1, level: 0.8, atk: 0.5, dec: 0.6, sus: 0.8, rel: 1.2, detune: 0 },
+        { ratio: 2, level: 0.4, atk: 0.6, dec: 0.6, sus: 0.6, rel: 1.2, detune: 3 },
+        { ratio: 3.5, level: 0.25, atk: 0.7, dec: 0.6, sus: 0.5, rel: 1.2, detune: 0 },
+        { ratio: 2, level: 0.4, atk: 0.6, dec: 0.5, sus: 0.6, rel: 1.0, detune: 0, feedback: 0.05 } ] },
+      { cat: "Orgues", name: "Orgue", algo: 5, ops: [
+        { ratio: 1, level: 0.9, atk: 0.01, dec: 0.1, sus: 1.0, rel: 0.2, detune: 0 },
+        { ratio: 2, level: 0.6, atk: 0.01, dec: 0.1, sus: 1.0, rel: 0.2, detune: 0 },
+        { ratio: 3, level: 0.4, atk: 0.01, dec: 0.1, sus: 1.0, rel: 0.2, detune: 0 },
+        { ratio: 4, level: 0.3, atk: 0.01, dec: 0.1, sus: 1.0, rel: 0.2, detune: 0 } ] }
+    ];
+    function openLibrary() {
+      ensureAudio();
+      const body = document.getElementById("libBody");
+      body.innerHTML = "";
+      [...new Set(SOUND_PRESETS.map(p => p.cat))].forEach(cat => {
+        const sec = document.createElement("section"); sec.className = "card";
+        const h = document.createElement("h3"); h.textContent = cat; sec.appendChild(h);
+        SOUND_PRESETS.filter(p => p.cat === cat).forEach(p => {
+          const row = document.createElement("div"); row.className = "card-row";
+          const name = document.createElement("button");
+          name.textContent = "▶ " + p.name; name.title = "Écouter";
+          name.style.flex = "1"; name.style.textAlign = "left";
+          name.addEventListener("click", () => previewPreset(p));
+          const add = document.createElement("button");
+          add.textContent = "+ Ajouter"; add.style.flex = "0 0 96px";
+          add.addEventListener("click", () => addPreset(p));
+          row.appendChild(name); row.appendChild(add); sec.appendChild(row);
+        });
+        body.appendChild(sec);
+      });
+      document.getElementById("libModal").hidden = false;
+    }
+    function previewPreset(p) {
+      ensureAudio();
+      const inst = { id: "_preview", name: p.name, algorithm: p.algo, operators: JSON.parse(JSON.stringify(p.ops)) };
+      [60, 64, 67].forEach((m, i) => setTimeout(() => playFM(m, 0.8, inst), i * 150));
+    }
+    function addPreset(p) {
+      const inst = { id: "fm_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6), name: p.name, algorithm: p.algo, operators: JSON.parse(JSON.stringify(p.ops)) };
+      customInstruments.push(inst);
+      saveCustomInstruments();
+      refreshCustomVoiceButtons();
+      chooseInstrument("fm:" + inst.id);
+      const lm = document.getElementById("libModal"); if (lm) lm.hidden = true;
+      hint.textContent = "🎛 Son « " + p.name + " » ajouté à tes instruments (appui long dessus pour le modifier).";
+      if (haptics.success) haptics.success();
     }
 
     function playFM(midi, vel, inst, panPos = 0) {
@@ -3518,6 +3635,7 @@
     document.getElementById("masterStopBtn").addEventListener("click", stopMasterRec);
     document.getElementById("exportBtn").addEventListener("click", exportState);
     document.getElementById("saveProjBtn").addEventListener("click", saveNamedProject);
+    document.getElementById("libCloseBtn").addEventListener("click", () => { document.getElementById("libModal").hidden = true; });
     document.getElementById("projName").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); saveNamedProject(); } });
     document.getElementById("importBtn").addEventListener("click", () => document.getElementById("importFile").click());
     document.getElementById("importFile").addEventListener("change", e => {
