@@ -947,6 +947,7 @@
       <button class="voice" data-voice="strings">Cordes</button>
       <button class="voice" data-voice="brass">Cuivres</button>
       <button class="voice" data-voice="drums">Rythme</button>
+      <button class="voice layerbtn" id="layerBtn" title="Empiler : jouer plusieurs instruments à la fois">⛓ Empiler</button>
       <button class="voice" data-voice="sample" title="Créer une voix">🎤 Voix +</button>
       <button class="voice add" id="fmAddBtn" title="Créer un instrument FM" aria-label="Créer un instrument FM">+</button>
     </section>
@@ -1206,6 +1207,8 @@
     let active = new Map();
     let pads = [];
     let voice = "pad";
+    let layerMode = false;       // empiler plusieurs instruments en live
+    let liveStack = ["pad"];     // instruments joués simultanément (le 1er = principal pour arp/séquence)
 
     const pointerNotes = new Map(); // pointerId -> { midi, padEl, handle, startY }
 
@@ -1891,13 +1894,18 @@
         analyse(); paint();
         return { setVibrato() {} };
       }
-      const handle = playVoice(midi, vel, voice, pan);
+      const voicesNow = (layerMode && liveStack.length > 1) ? liveStack.slice() : [voice];
+      const handles = voicesNow.map(v => playVoice(midi, vel, v, pan));
+      const handle = handles.length === 1 ? handles[0] : {
+        setVibrato(c) { handles.forEach(h => h && h.setVibrato && h.setVibrato(c)); },
+        stop() { handles.forEach(h => h && h.stop && h.stop()); }
+      };
       sendMIDINoteOn(midi, vel);
       active.set(midi, pitchClass(midi));
       if (loopMode === "recording" || loopMode === "overdubbing") {
         const t = audioCtx.currentTime - recordStartTime;
         const eventT = loopLength > 0 ? ((t % loopLength) + loopLength) % loopLength : t;
-        loopEvents.push({ t: eventT, midi, velocity: vel, voice });
+        voicesNow.forEach(v => loopEvents.push({ t: eventT, midi, velocity: vel, voice: v }));
       }
       analyse(); paint();
       return handle;
@@ -2283,17 +2291,45 @@
     }
 
     /* ========= UI wire ========= */
+    function refreshInstrumentHighlight() {
+      document.querySelectorAll(".voice").forEach(b => {
+        if (b.classList.contains("add") || b.id === "layerBtn") return;
+        b.classList.toggle("on", liveStack.indexOf(b.dataset.voice) >= 0);
+      });
+    }
+    function chooseInstrument(vc) {
+      if (layerMode) {
+        const i = liveStack.indexOf(vc);
+        if (i >= 0) { if (liveStack.length > 1) liveStack.splice(i, 1); }  // retire (mais jamais vide)
+        else liveStack.push(vc);
+      } else {
+        liveStack = [vc];
+      }
+      voice = liveStack[0];
+      refreshInstrumentHighlight();
+      assignVoiceToTrackIfSeq();
+      if (typeof sequencer !== "undefined" && sequencer.selectedStep >= 0) updateSeqHint();
+      if (haptics && haptics.medium) haptics.medium();
+    }
+    function toggleLayer() {
+      layerMode = !layerMode;
+      const lb = document.getElementById("layerBtn");
+      if (lb) lb.classList.toggle("on", layerMode);
+      if (!layerMode && liveStack.length > 1) { liveStack = [voice]; refreshInstrumentHighlight(); }
+      hint.textContent = layerMode
+        ? "⛓ Empilage ON — touche plusieurs instruments pour les jouer ENSEMBLE (re-tape pour en retirer)."
+        : "Empilage OFF — un seul instrument à la fois.";
+      if (haptics && haptics.medium) haptics.medium();
+    }
+
+    /* ========= UI wire ========= */
     document.querySelectorAll(".voice").forEach(btn => {
       btn.addEventListener("click", () => {
         if (btn.classList.contains("add")) return;
+        if (btn.id === "layerBtn") { toggleLayer(); return; }
         // 🎤 Voice : si aucun échantillon, ouvre l'enregistreur guidé au lieu de sélectionner du vide
         if (btn.dataset.voice === "sample") { openVoiceRecorder(); return; }
-        document.querySelectorAll(".voice").forEach(b => b.classList.remove("on"));
-        btn.classList.add("on");
-        voice = btn.dataset.voice;
-        assignVoiceToTrackIfSeq();
-        if (sequencer.selectedStep >= 0) updateSeqHint();
-        haptics.medium();
+        chooseInstrument(btn.dataset.voice);
       });
     });
 
@@ -2483,10 +2519,7 @@
         btn.addEventListener("pointercancel", cancel);
         btn.addEventListener("click", () => {
           if (lpFired) { lpFired = false; return; }
-          document.querySelectorAll(".voice").forEach(b => b.classList.remove("on"));
-          btn.classList.add("on");
-          voice = "fm:" + inst.id;
-          assignVoiceToTrackIfSeq();
+          chooseInstrument("fm:" + inst.id);
           });
         addBtn.parentNode.insertBefore(btn, addBtn);
       });
@@ -3376,15 +3409,7 @@
         anchor.parentNode.insertBefore(btn, anchor);
       });
     }
-    function selectVoice(vc) {
-      document.querySelectorAll(".voice").forEach(b => b.classList.remove("on"));
-      const b = document.querySelector('.voice[data-voice="' + vc.replace(/"/g, '\\"') + '"]');
-      if (b) b.classList.add("on");
-      voice = vc;
-      assignVoiceToTrackIfSeq();
-      if (typeof sequencer !== "undefined" && sequencer.selectedStep >= 0) updateSeqHint();
-      if (haptics && haptics.medium) haptics.medium();
-    }
+    function selectVoice(vc) { chooseInstrument(vc); }
 
     function updateVoiceButton() { /* la rangée des voix est gérée par refreshVoiceButtons() */ }
 
