@@ -2380,20 +2380,25 @@
       // courbe de redressement |x| (suiveur d'enveloppe)
       const N = 1024, abs = new Float32Array(N);
       for (let i = 0; i < N; i++) { const x = (i / (N - 1)) * 2 - 1; abs[i] = Math.abs(x); }
-      const centers = [180, 270, 400, 580, 820, 1150, 1600, 2200, 3000, 4200, 5800, 8000];
+      const centers = [140, 200, 290, 400, 540, 720, 950, 1250, 1650, 2150, 2800, 3700, 4900, 6400];
       vocoder.bands = centers.map(f => {
-        const Q = 5;
+        const Q = 9;                                            // bandes plus étroites = voyelles mieux résolues
         const modBP = audioCtx.createBiquadFilter(); modBP.type = "bandpass"; modBP.frequency.value = f; modBP.Q.value = Q;
         const rect = audioCtx.createWaveShaper(); rect.curve = abs;
-        const envLP = audioCtx.createBiquadFilter(); envLP.type = "lowpass"; envLP.frequency.value = 28;
-        const envGain = audioCtx.createGain(); envGain.gain.value = 18;
+        const envLP = audioCtx.createBiquadFilter(); envLP.type = "lowpass"; envLP.frequency.value = 50; // enveloppe plus rapide = articulation
+        const envGain = audioCtx.createGain(); envGain.gain.value = 22;
         const carBP = audioCtx.createBiquadFilter(); carBP.type = "bandpass"; carBP.frequency.value = f; carBP.Q.value = Q;
         const bandGain = audioCtx.createGain(); bandGain.gain.value = 0;
         vocoder.mic.connect(modBP); modBP.connect(rect); rect.connect(envLP); envLP.connect(envGain);
-        envGain.connect(bandGain.gain);                          // l'enveloppe du micro pilote le gain de la bande
+        envGain.connect(bandGain.gain);                          // l'enveloppe du micro pilote le gain de la bande de la porteuse
         vocoder.carrierGain.connect(carBP); carBP.connect(bandGain); bandGain.connect(vocoder.out);
         return { modBP, rect, envLP, envGain, carBP, bandGain };
       });
+      // Sifflantes/consonnes (s, t, ch) du micro passées en direct : rend le vocodeur intelligible
+      const hiss = audioCtx.createBiquadFilter(); hiss.type = "highpass"; hiss.frequency.value = 4000;
+      const hissGain = audioCtx.createGain(); hissGain.gain.value = 0.16;
+      vocoder.mic.connect(hiss); hiss.connect(hissGain); hissGain.connect(vocoder.out);
+      vocoder.extra = [hiss, hissGain];
       return true;
     }
     function vocoderSetNote(midi, atTime) {
@@ -2411,10 +2416,11 @@
       const t = audioCtx ? audioCtx.currentTime : 0;
       try { if (vocoder.carrier) { vocoder.carrier.c1.stop(t + 0.2); vocoder.carrier.c2.stop(t + 0.2); } } catch (e) {}
       try { if (vocoder.mic) vocoder.mic.disconnect(); } catch (e) {}
+      (vocoder.extra || []).forEach(n => { try { n.disconnect(); } catch (e) {} });
       vocoder.bands.forEach(b => { for (const k in b) { try { b[k].disconnect(); } catch (e) {} } });
       try { if (vocoder.out) vocoder.out.disconnect(); } catch (e) {}
       if (vocoder.stream) { vocoder.stream.getTracks().forEach(tr => tr.stop()); vocoder.stream = null; }
-      vocoder.bands = []; vocoder.mic = null; vocoder.carrier = null; vocoder.carrierGain = null; vocoder.out = null;
+      vocoder.bands = []; vocoder.extra = []; vocoder.mic = null; vocoder.carrier = null; vocoder.carrierGain = null; vocoder.out = null;
     }
     async function toggleVocoder() {
       ensureAudio();
