@@ -998,6 +998,8 @@
       <label><span>Chorus</span><input id="chorusSlider" type="range" min="0" max="1" step="0.01" value="0" /></label>
       <label><span>Flanger</span><input id="flangerSlider" type="range" min="0" max="1" step="0.01" value="0" /></label>
       <label><span>Phaser</span><input id="phaserSlider" type="range" min="0" max="1" step="0.01" value="0" /></label>
+      <label><span>Swing</span><input id="swingSlider" type="range" min="0" max="0.5" step="0.01" value="0.14" /></label>
+      <label><span>Humain</span><input id="humanSlider" type="range" min="0" max="1" step="0.01" value="0.45" /></label>
     </section>
 
     <section class="fx" id="vocLevelRow" hidden>
@@ -2071,6 +2073,20 @@
       setInterval(schedulerTick, 25);
     }
 
+    /* Groove / humanisation : swing sur les contretemps + micro-décalages + variation de vélocité */
+    let swingAmt = 0.14;     // 0..0.5 : retard du contretemps
+    let humanizeAmt = 0.45;  // 0..1 : ampleur des micro-décalages et des variations de vélocité
+    function grooveOffset(stepIdx, stepsPerBeat) {
+      const eighth = Math.max(1, Math.round(stepsPerBeat / 2));
+      const off8 = (Math.floor(stepIdx / eighth) % 2) === 1;     // contretemps (croche levée)
+      const swing = off8 ? swingAmt * (beatDuration() / 2) : 0;
+      const jitter = (Math.random() * 2 - 1) * humanizeAmt * 0.012;
+      return swing + jitter;
+    }
+    function humanVel(base) {
+      return Math.max(0.12, Math.min(1, base + (Math.random() * 2 - 1) * humanizeAmt * 0.18));
+    }
+
     function schedulerTick() {
       if (!audioCtx) return;
       const now = audioCtx.currentTime;
@@ -2082,15 +2098,11 @@
         while (arpNextTime < horizon) {
           const n = pickArpNote();
           if (n !== null && !vocoderMode) {   // en vocodeur : accord soutenu (vocoderUpdateChord), pas d'arpège
-            // Naturel : accent sur les temps + léger swing sur les contretemps + micro-humanisation
+            // Naturel : accent sur les temps + swing/micro-décalages + variation de vélocité (réglables)
             const stepIdx = Math.round(arpNextTime / step);
             const onBeat = (stepIdx % arpRate) === 0;
-            const swing = (stepIdx % 2 === 1) ? step * 0.14 : 0;
-            const at = arpNextTime + swing;
-            const base = (arpMode === "wander")
-              ? (onBeat ? 0.74 : 0.46) + Math.random() * 0.18
-              : (onBeat ? 0.85 : 0.6) + Math.random() * 0.08;
-            const aVel = Math.max(0.2, Math.min(1, base));
+            const at = arpNextTime + grooveOffset(stepIdx, arpRate);
+            const aVel = humanVel(arpMode === "wander" ? (onBeat ? 0.74 : 0.5) : (onBeat ? 0.85 : 0.62));
             const arpVoices = (layerMode && liveStack.length > 1) ? liveStack : [voice]; // l'arp suit l'empilage
             arpVoices.forEach(v => {
               scheduleNoteAt(n, aVel, v, at);
@@ -2113,12 +2125,13 @@
         const stepDur = beatDuration() / sequencer.subdivision;
         while (sequencer.nextStepTime < horizon) {
           const stepIdx = sequencer.currentStep;
+          const at = sequencer.nextStepTime + grooveOffset(stepIdx, sequencer.subdivision); // groove/humanisation
           // Multipiste : toutes les couches non-muettes jouent ensemble, chacune son instrument
           for (let t = 0; t < NUM_PATTERNS; t++) {
             if (sequencer.trackMuted[t]) continue;
             const notes = sequencer.patterns[t][stepIdx] || [];
             const tv = sequencer.trackVoice[t] || voice;
-            notes.forEach(n => scheduleNoteAt(n.midi, n.velocity, n.voice || tv, sequencer.nextStepTime));
+            notes.forEach(n => scheduleNoteAt(n.midi, humanVel(n.velocity), n.voice || tv, at));
           }
           sequencer.nextStepTime += stepDur;
           sequencer.currentStep = (stepIdx + 1) % STEPS;
@@ -2668,6 +2681,8 @@
         if (fxRack) fxRack[key].setAmount(parseFloat(e.target.value) || 0);
       });
     });
+    document.getElementById("swingSlider").addEventListener("input", e => { swingAmt = parseFloat(e.target.value) || 0; });
+    document.getElementById("humanSlider").addEventListener("input", e => { humanizeAmt = parseFloat(e.target.value) || 0; });
     document.getElementById("vocLevelSlider").addEventListener("input", e => {
       vocoderLevel = parseFloat(e.target.value) || 0;
       if (vocoder.out && audioCtx) vocoder.out.gain.setTargetAtTime(vocoderLevel, audioCtx.currentTime, 0.03);
@@ -3555,6 +3570,8 @@
           voice: voice,
           arpMode: arpMode,
           arpRate: arpRate,
+          swing: swingAmt,
+          humanize: humanizeAmt,
           delaySend: parseFloat(delaySlider.value),
           reverbSend: parseFloat(reverbSlider.value),
           fx: {
@@ -3635,6 +3652,8 @@
             }
             if (ss.arpMode)         { arpMode = ss.arpMode; arpSelect.value = ss.arpMode; }
             if (ss.arpRate)         { arpRate = ss.arpRate; const ar = document.getElementById("arpRateSelect"); if (ar) ar.value = String(ss.arpRate); }
+            if (ss.swing != null)    { swingAmt = ss.swing; const e = document.getElementById("swingSlider"); if (e) e.value = ss.swing; }
+            if (ss.humanize != null) { humanizeAmt = ss.humanize; const e = document.getElementById("humanSlider"); if (e) e.value = ss.humanize; }
             if (ss.delaySend != null)  delaySlider.value  = ss.delaySend;
             if (ss.reverbSend != null) reverbSlider.value = ss.reverbSend;
             if (ss.fx) {
