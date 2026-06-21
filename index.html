@@ -2838,7 +2838,7 @@
           // Partage = UNE seule sauvegarde. On NE retombe PAS sur le téléchargement
           // en cas de rejet : iOS rejette parfois la promesse après un partage réussi,
           // ce qui créait un 2e fichier.
-          navigator.share({ files: [shareFile], title: "Harmatrix" })
+          navigator.share({ files: [shareFile] })   // fichiers SEULEMENT (un title créait un .txt en plus sur iOS)
             .then(() => { hint.textContent = "Partagé — choisis « Enregistrer dans Fichiers »."; })
             .catch(() => { hint.textContent = "Partage fermé — re-tape le bouton si tu veux réessayer."; });
           return;
