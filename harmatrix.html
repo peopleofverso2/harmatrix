@@ -2365,10 +2365,13 @@
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return false;
       let stream;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+        // echoCancellation ON : isole TA voix du son joué (sinon le micro capte la porteuse/musique)
+        stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       } catch (e) { return false; }
       vocoder.stream = stream;
       vocoder.mic = audioCtx.createMediaStreamSource(stream);
+      vocoder.analyser = audioCtx.createAnalyser(); vocoder.analyser.fftSize = 512;
+      vocoder.mic.connect(vocoder.analyser);   // pour le vumètre micro (diagnostic)
       vocoder.out = audioCtx.createGain(); vocoder.out.gain.value = 1.0; vocoder.out.connect(master);
       vocoder.carrierGain = audioCtx.createGain(); vocoder.carrierGain.gain.value = 0; // porte ouverte par les notes tenues
       const c1 = audioCtx.createOscillator(); c1.type = "sawtooth";
@@ -2411,7 +2414,20 @@
     function vocoderGateOff() {
       if (vocoder.carrierGain && audioCtx) vocoder.carrierGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.06);
     }
+    function vocoderMeterLoop() {
+      if (!vocoderMode || !vocoder.analyser) return;
+      const buf = new Uint8Array(vocoder.analyser.fftSize);
+      vocoder.analyser.getByteTimeDomainData(buf);
+      let sum = 0; for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
+      const lvl = Math.min(1, Math.sqrt(sum / buf.length) * 4);
+      const n = Math.round(lvl * 16);
+      chordName.textContent = "🎙️ Vocodeur";
+      hint.textContent = "Voix micro : " + "▮".repeat(n) + "▯".repeat(16 - n) +
+        (lvl < 0.02 ? "  — rien capté : ce n'est pas le bon micro / pas d'accès." : "");
+      vocoder.meterRAF = requestAnimationFrame(vocoderMeterLoop);
+    }
     function stopVocoder() {
+      if (vocoder.meterRAF) { cancelAnimationFrame(vocoder.meterRAF); vocoder.meterRAF = null; }
       try { vocoderGateOff(); } catch (e) {}
       const t = audioCtx ? audioCtx.currentTime : 0;
       try { if (vocoder.carrier) { vocoder.carrier.c1.stop(t + 0.2); vocoder.carrier.c2.stop(t + 0.2); } } catch (e) {}
@@ -2420,7 +2436,7 @@
       vocoder.bands.forEach(b => { for (const k in b) { try { b[k].disconnect(); } catch (e) {} } });
       try { if (vocoder.out) vocoder.out.disconnect(); } catch (e) {}
       if (vocoder.stream) { vocoder.stream.getTracks().forEach(tr => tr.stop()); vocoder.stream = null; }
-      vocoder.bands = []; vocoder.extra = []; vocoder.mic = null; vocoder.carrier = null; vocoder.carrierGain = null; vocoder.out = null;
+      vocoder.bands = []; vocoder.extra = []; vocoder.mic = null; vocoder.carrier = null; vocoder.carrierGain = null; vocoder.out = null; vocoder.analyser = null;
     }
     async function toggleVocoder() {
       ensureAudio();
@@ -2440,7 +2456,7 @@
       arpMode = "auto"; if (arpSelect) arpSelect.value = "auto"; arpIndex = 0; arpDirection = 1;
       if (!hold) { hold = true; if (holdBtn) holdBtn.textContent = "Hold: on"; }
       const vb = document.getElementById("vocoderBtn"); if (vb) vb.classList.add("on");
-      hint.textContent = "🎙️ Vocodeur ON — tiens une note et CHANTE dans le micro (au casque !). Ta voix chante l'arpège, accordée.";
+      vocoderMeterLoop();   // vumètre micro : vérifie que ta voix est bien captée
       if (haptics && haptics.success) haptics.success();
     }
 
