@@ -1951,12 +1951,15 @@
           const n = pickArpNote();
           if (n !== null) {
             const aVel = (arpMode === "wander") ? (0.5 + Math.random() * 0.4) : 0.7; // humanisation en mode aléa
-            scheduleNoteAt(n, aVel, voice, arpNextTime);
-            if (loopMode === "recording" || loopMode === "overdubbing") {
-              const t = arpNextTime - recordStartTime;
-              const eventT = loopLength > 0 ? ((t % loopLength) + loopLength) % loopLength : t;
-              loopEvents.push({ t: eventT, midi: n, velocity: aVel, voice });
-            }
+            const arpVoices = (layerMode && liveStack.length > 1) ? liveStack : [voice]; // l'arp suit l'empilage
+            arpVoices.forEach(v => {
+              scheduleNoteAt(n, aVel, v, arpNextTime);
+              if (loopMode === "recording" || loopMode === "overdubbing") {
+                const t = arpNextTime - recordStartTime;
+                const eventT = loopLength > 0 ? ((t % loopLength) + loopLength) % loopLength : t;
+                loopEvents.push({ t: eventT, midi: n, velocity: aVel, voice: v });
+              }
+            });
           }
           arpNextTime += step;
         }
