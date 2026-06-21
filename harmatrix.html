@@ -366,6 +366,7 @@
       border: 1px solid var(--line);
       border-radius: 14px;
       padding: 10px 12px;
+      flex: 0 0 auto;   /* ne pas se faire comprimer par le flex de .modal-body (sinon le contenu déborde) */
     }
     .card-row { display: flex; align-items: center; gap: 10px; }
     .card-row > label { font-size: 12px; color: var(--muted); font-weight: 700; min-width: 80px; }
