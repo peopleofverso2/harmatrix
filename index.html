@@ -1901,6 +1901,7 @@
           arpNextTime = 0; // se cale sur la prochaine subdivision du tempo (synchro)
         }
         active.set(midi, pitchClass(midi));
+        if (vocoderMode) vocoderUpdateChord();   // porteuse = accord tenu
         analyse(); paint();
         return { setVibrato() {} };
       }
@@ -1928,6 +1929,7 @@
         sendMIDINoteOff(midi);
       }
       active.delete(midi);
+      if (vocoderMode) vocoderUpdateChord();
       analyse(); paint();
     }
 
@@ -1959,21 +1961,17 @@
         if (arpNextTime < now) arpNextTime = Math.ceil(now / step) * step;  // (re)cale sur la grille du beat
         while (arpNextTime < horizon) {
           const n = pickArpNote();
-          if (n !== null) {
-            if (vocoderMode && vocoder.carrier) {
-              vocoderSetNote(n, arpNextTime);   // la porteuse suit l'arpège ; le micro la façonne
-            } else {
-              const aVel = (arpMode === "wander") ? (0.5 + Math.random() * 0.4) : 0.7; // humanisation en mode aléa
-              const arpVoices = (layerMode && liveStack.length > 1) ? liveStack : [voice]; // l'arp suit l'empilage
-              arpVoices.forEach(v => {
-                scheduleNoteAt(n, aVel, v, arpNextTime);
-                if (loopMode === "recording" || loopMode === "overdubbing") {
-                  const t = arpNextTime - recordStartTime;
-                  const eventT = loopLength > 0 ? ((t % loopLength) + loopLength) % loopLength : t;
-                  loopEvents.push({ t: eventT, midi: n, velocity: aVel, voice: v });
-                }
-              });
-            }
+          if (n !== null && !vocoderMode) {   // en vocodeur : accord soutenu (vocoderUpdateChord), pas d'arpège
+            const aVel = (arpMode === "wander") ? (0.5 + Math.random() * 0.4) : 0.7; // humanisation en mode aléa
+            const arpVoices = (layerMode && liveStack.length > 1) ? liveStack : [voice]; // l'arp suit l'empilage
+            arpVoices.forEach(v => {
+              scheduleNoteAt(n, aVel, v, arpNextTime);
+              if (loopMode === "recording" || loopMode === "overdubbing") {
+                const t = arpNextTime - recordStartTime;
+                const eventT = loopLength > 0 ? ((t % loopLength) + loopLength) % loopLength : t;
+                loopEvents.push({ t: eventT, midi: n, velocity: aVel, voice: v });
+              }
+            });
           }
           arpNextTime += step;
         }
@@ -2163,6 +2161,7 @@
         if (active.has(midi)) {
           if (arpMode !== "off") arpHold = arpHold.filter(m => m !== midi);
           active.delete(midi);
+          if (vocoderMode) vocoderUpdateChord();
           analyse(); paint();
         } else {
           noteOn(midi, vel, pan);
@@ -2379,12 +2378,18 @@
       vocoder.mic.connect(vocoder.analyser);   // pour le vumètre micro (diagnostic)
       vocoder.out = audioCtx.createGain(); vocoder.out.gain.value = vocoderLevel; vocoder.out.connect(master); // gain de compensation (réglable en live)
       vocoder.carrierGain = audioCtx.createGain(); vocoder.carrierGain.gain.value = 0; // porte ouverte par les notes tenues
-      const c1 = audioCtx.createOscillator(); c1.type = "sawtooth";
-      const c2 = audioCtx.createOscillator(); c2.type = "sawtooth"; c2.detune.value = 7;
-      const cmix = audioCtx.createGain(); cmix.gain.value = 0.5;
-      c1.connect(cmix); c2.connect(cmix); cmix.connect(vocoder.carrierGain);
-      c1.start(); c2.start();
-      vocoder.carrier = { c1, c2 };
+      // Porteuse POLYPHONIQUE soutenue : un accord tenu (pas un arpège) -> voix lisse, pas hachée
+      const cmix = audioCtx.createGain(); cmix.gain.value = 0.45; cmix.connect(vocoder.carrierGain);
+      vocoder.carrierVoices = [];
+      for (let i = 0; i < 4; i++) {
+        const a = audioCtx.createOscillator(); a.type = "sawtooth";
+        const b = audioCtx.createOscillator(); b.type = "sawtooth"; b.detune.value = 8;
+        const vg = audioCtx.createGain(); vg.gain.value = 0;     // voix activée selon l'accord
+        a.connect(vg); b.connect(vg); vg.connect(cmix);
+        a.start(); b.start();
+        vocoder.carrierVoices.push({ a, b, vg });
+      }
+      vocoder.carrier = true;
       // courbe de redressement |x| (suiveur d'enveloppe)
       const N = 1024, abs = new Float32Array(N);
       for (let i = 0; i < N; i++) { const x = (i / (N - 1)) * 2 - 1; abs[i] = Math.abs(x); }
@@ -2393,7 +2398,7 @@
         const Q = 9;                                            // bandes plus étroites = voyelles mieux résolues
         const modBP = audioCtx.createBiquadFilter(); modBP.type = "bandpass"; modBP.frequency.value = f; modBP.Q.value = Q;
         const rect = audioCtx.createWaveShaper(); rect.curve = abs;
-        const envLP = audioCtx.createBiquadFilter(); envLP.type = "lowpass"; envLP.frequency.value = 50; // enveloppe plus rapide = articulation
+        const envLP = audioCtx.createBiquadFilter(); envLP.type = "lowpass"; envLP.frequency.value = 35; // enveloppe : articulation sans granularité
         const envGain = audioCtx.createGain(); envGain.gain.value = 30;
         const carBP = audioCtx.createBiquadFilter(); carBP.type = "bandpass"; carBP.frequency.value = f; carBP.Q.value = Q;
         const bandGain = audioCtx.createGain(); bandGain.gain.value = 0;
@@ -2409,12 +2414,25 @@
       vocoder.extra = [hiss, hissGain];
       return true;
     }
-    function vocoderSetNote(midi, atTime) {
-      if (!vocoder.carrier) return;
-      const f = midiToFreq(midi);
-      vocoder.carrier.c1.frequency.setValueAtTime(f, atTime);
-      vocoder.carrier.c2.frequency.setValueAtTime(f, atTime);
-      vocoder.carrierGain.gain.setTargetAtTime(0.9, atTime, 0.008);
+    function vocoderUpdateChord() {
+      if (!vocoder.carrierVoices || !audioCtx) return;
+      const t = audioCtx.currentTime;
+      let notes = [];
+      if (arpHold.length === 1) notes = autoArpChord(arpHold[0]);       // une note -> accord diatonique
+      else if (arpHold.length > 1) notes = arpHold.slice().sort((a, b) => a - b);
+      notes = notes.slice(0, 4);
+      if (notes.length === 0) { vocoder.carrierGain.gain.setTargetAtTime(0, t, 0.08); return; }
+      vocoder.carrierVoices.forEach((cv, i) => {
+        if (i < notes.length) {
+          const f = midiToFreq(notes[i]);
+          cv.a.frequency.setTargetAtTime(f, t, 0.02);
+          cv.b.frequency.setTargetAtTime(f, t, 0.02);
+          cv.vg.gain.setTargetAtTime(1 / notes.length, t, 0.02);
+        } else {
+          cv.vg.gain.setTargetAtTime(0, t, 0.02);
+        }
+      });
+      vocoder.carrierGain.gain.setTargetAtTime(0.9, t, 0.02);          // accord tenu, continu
     }
     function vocoderGateOff() {
       if (vocoder.carrierGain && audioCtx) vocoder.carrierGain.gain.setTargetAtTime(0, audioCtx.currentTime, 0.06);
@@ -2435,13 +2453,13 @@
       if (vocoder.meterRAF) { cancelAnimationFrame(vocoder.meterRAF); vocoder.meterRAF = null; }
       try { vocoderGateOff(); } catch (e) {}
       const t = audioCtx ? audioCtx.currentTime : 0;
-      try { if (vocoder.carrier) { vocoder.carrier.c1.stop(t + 0.2); vocoder.carrier.c2.stop(t + 0.2); } } catch (e) {}
+      (vocoder.carrierVoices || []).forEach(cv => { try { cv.a.stop(t + 0.2); cv.b.stop(t + 0.2); } catch (e) {} });
       try { if (vocoder.mic) vocoder.mic.disconnect(); } catch (e) {}
       (vocoder.extra || []).forEach(n => { try { n.disconnect(); } catch (e) {} });
       vocoder.bands.forEach(b => { for (const k in b) { try { b[k].disconnect(); } catch (e) {} } });
       try { if (vocoder.out) vocoder.out.disconnect(); } catch (e) {}
       if (vocoder.stream) { vocoder.stream.getTracks().forEach(tr => tr.stop()); vocoder.stream = null; }
-      vocoder.bands = []; vocoder.extra = []; vocoder.mic = null; vocoder.carrier = null; vocoder.carrierGain = null; vocoder.out = null; vocoder.analyser = null;
+      vocoder.bands = []; vocoder.extra = []; vocoder.mic = null; vocoder.carrier = null; vocoder.carrierVoices = null; vocoder.carrierGain = null; vocoder.out = null; vocoder.analyser = null;
     }
     async function toggleVocoder() {
       ensureAudio();
