@@ -2742,11 +2742,16 @@
         { ratio: 2, level: 0.6, atk: 0.003, dec: 0.2, sus: 0.15, rel: 0.2, detune: 0 },
         { ratio: 1, level: 0.5, atk: 0.003, dec: 0.2, sus: 0.2, rel: 0.2, detune: 0 },
         { ratio: 1, level: 0.4, atk: 0.003, dec: 0.15, sus: 0.1, rel: 0.2, detune: 0, feedback: 0.22 } ] },
-      { cat: "Basses", name: "Contrebasse", algo: 0, ops: [
-        { ratio: 1, level: 1.0, atk: 0.004, dec: 0.7, sus: 0.25, rel: 0.5, detune: 0 },
-        { ratio: 1, level: 0.45, atk: 0.004, dec: 0.5, sus: 0.2, rel: 0.4, detune: 0 },
-        { ratio: 2, level: 0.5, atk: 0.002, dec: 0.14, sus: 0.0, rel: 0.2, detune: 0 },
-        { ratio: 3, level: 0.3, atk: 0.002, dec: 0.1, sus: 0.0, rel: 0.15, detune: 0, feedback: 0.1 } ] },
+      { cat: "Basses", name: "Contrebasse", algo: 2, ops: [
+        { ratio: 1, level: 1.0, atk: 0.004, dec: 0.7, sus: 0.25, rel: 0.5, detune: 0 },     // fondamentale (porteur)
+        { ratio: 2, level: 0.45, atk: 0.002, dec: 0.14, sus: 0.0, rel: 0.2, detune: 0 },    // attaque (module la fondamentale)
+        { ratio: 0.5, level: 0.85, atk: 0.006, dec: 0.8, sus: 0.45, rel: 0.6, detune: 0 },  // SOUS-OCTAVE (porteur infra)
+        { ratio: 1, level: 0.2, atk: 0.002, dec: 0.1, sus: 0.0, rel: 0.15, detune: 0, feedback: 0.08 } ] },
+      { cat: "Basses", name: "Infra Bass", algo: 0, ops: [
+        { ratio: 0.5, level: 1.0, atk: 0.01, dec: 0.4, sus: 0.9, rel: 0.45, detune: 0 },    // sub pur (octave en-dessous)
+        { ratio: 1, level: 0.16, atk: 0.01, dec: 0.3, sus: 0.25, rel: 0.3, detune: 0 },     // un poil d'harmonique (audible sur petit HP)
+        { ratio: 1, level: 0.0, atk: 0.01, dec: 0.2, sus: 0.0, rel: 0.2, detune: 0 },
+        { ratio: 2, level: 0.08, atk: 0.005, dec: 0.1, sus: 0.0, rel: 0.15, detune: 0, feedback: 0.05 } ] },
       { cat: "Claviers", name: "Piano élec", algo: 2, ops: [
         { ratio: 1, level: 1.0, atk: 0.002, dec: 0.9, sus: 0.0, rel: 0.5, detune: 0 },
         { ratio: 1, level: 0.45, atk: 0.002, dec: 0.45, sus: 0.0, rel: 0.3, detune: 0 },
