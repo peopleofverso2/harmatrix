@@ -4999,6 +4999,16 @@
     });
     document.getElementById("liveRecBtn").addEventListener("click", toggleLiveRecord);
     document.getElementById("genBtn").addEventListener("click", generatePattern);
+
+    /* Empêche le geste "retour" par balayage de bord : sur un instrument plein écran,
+       glisser au bord faisait apparaître la page précédente (effet de double interface décalée).
+       On piège l'historique pour rester sur l'écran de jeu. */
+    (function preventBackSwipe() {
+      try {
+        history.pushState(null, "", location.href);
+        window.addEventListener("popstate", () => { history.pushState(null, "", location.href); });
+      } catch (e) {}
+    })();
     (function renderStyleStrip() {
       const strip = document.getElementById("styleStrip");
       if (!strip) return;
