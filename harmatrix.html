@@ -175,6 +175,16 @@
     .fx label span { min-width: 36px; font-weight: 700; letter-spacing: .02em; }
     .fx input[type=range] { flex: 1; accent-color: var(--scale); height: 4px; margin: 0; }
 
+    /* Sélecteur de cible des effets : global ou par piste */
+    .fxtargets { grid-column: 1 / -1; display: flex; gap: 6px; }
+    .fxchip {
+      flex: 1; width: auto; min-height: 28px; padding: 0 6px;
+      border: 1px solid var(--line); background: rgba(255,255,255,.05);
+      color: var(--muted); border-radius: 8px; font-weight: 800; font-size: 12px; font-family: inherit;
+    }
+    .fxchip.on { color: var(--text); border-color: color-mix(in srgb, var(--chord) 55%, transparent); background: color-mix(in srgb, var(--chord) 16%, rgba(255,255,255,.05)); }
+    .fxchip.target { outline: 2px solid var(--scale); outline-offset: -2px; color: var(--text); }
+
     /* Tiroir repliable (rack d'effets) */
     .drawer-toggle {
       width: 100%; min-height: 30px; padding: 0 12px;
@@ -1031,6 +1041,13 @@
     <button id="fxToggle" class="drawer-toggle" aria-expanded="false" aria-controls="fxRackRow">🎚 Effets &amp; groove</button>
 
     <section class="fx" id="fxRackRow" hidden>
+      <div class="fxtargets" id="fxTargets" title="Effets : global ou par piste (A–D)">
+        <button class="fxchip target" data-fxt="master">Global</button>
+        <button class="fxchip" data-fxt="0">A</button>
+        <button class="fxchip" data-fxt="1">B</button>
+        <button class="fxchip" data-fxt="2">C</button>
+        <button class="fxchip" data-fxt="3">D</button>
+      </div>
       <label><span>Delay</span><input id="delaySlider" type="range" min="0" max="0.7" step="0.01" value="0" /></label>
       <label><span>Reverb</span><input id="reverbSlider" type="range" min="0" max="0.7" step="0.01" value="0.32" /></label>
       <label><span>Disto</span><input id="distoSlider" type="range" min="0" max="1" step="0.01" value="0" /></label>
@@ -1392,6 +1409,13 @@
 
     /* ===== Rack d'effets (inséré sur le bus master) ===== */
     let fxRack = null;
+    /* ---- FX par piste ---- */
+    let fxDest = null;                 // destination courante d'une note (null = bus master/global)
+    let fxTarget = "master";          // cible éditée par les curseurs : "master" | "0".."3"
+    let reverbIR = null;              // IR de reverb partagée (réutilisée par les pistes)
+    const trackChannels = {};         // "0".."3" -> chaîne d'effets dédiée (créée à la demande)
+    const trackFxOn = [false, false, false, false];   // la couche route-t-elle vers sa chaîne perso ?
+    const fxVals = { master: { delay: 0, reverb: 0.32, disto: 0, chorus: 0, flanger: 0, phaser: 0 } };
     function makeDistortion(ctx) {
       const inp = ctx.createGain(), out = ctx.createGain();
       const dryG = ctx.createGain(); dryG.gain.value = 1;
@@ -1469,6 +1493,75 @@
       fxRack.phaser.setAmount(g("phaserSlider"));
     }
 
+    /* Chaîne d'effets dédiée à une piste : inserts (disto→chorus→flanger→phaser)
+       + reverb et delay propres + sortie sèche, le tout sommé dans le limiteur.
+       Créée à la demande (aucun coût tant qu'une piste n'a pas ses propres effets). */
+    function buildTrackChannel() {
+      const input = audioCtx.createGain();
+      const disto = makeDistortion(audioCtx), chorus = makeChorus(audioCtx), flanger = makeFlanger(audioCtx), phaser = makePhaser(audioCtx);
+      input.connect(disto.in); disto.out.connect(chorus.in); chorus.out.connect(flanger.in); flanger.out.connect(phaser.in);
+      const rackOut = phaser.out;
+      const dryG = audioCtx.createGain(); dryG.gain.value = 0.9;
+      rackOut.connect(dryG).connect(limiter);
+      // reverb propre
+      const wetHP = audioCtx.createBiquadFilter(); wetHP.type = "highpass"; wetHP.frequency.value = 200;
+      const rv = audioCtx.createConvolver(); rv.buffer = reverbIR;
+      const rvWet = audioCtx.createGain(); rvWet.gain.value = 0;
+      rackOut.connect(wetHP).connect(rv).connect(rvWet).connect(limiter);
+      // delay ping-pong propre
+      const merger = audioCtx.createChannelMerger(2);
+      const dL = audioCtx.createDelay(2.0), dR = audioCtx.createDelay(2.0);
+      const t8 = beatDuration() / 2; dL.delayTime.value = t8; dR.delayTime.value = t8;
+      const fb = audioCtx.createGain(); fb.gain.value = 0.4;
+      const dWet = audioCtx.createGain(); dWet.gain.value = 0;
+      const dIn = audioCtx.createGain();
+      rackOut.connect(dIn); dIn.connect(dL); dL.connect(dR); dR.connect(fb).connect(dL);
+      dL.connect(merger, 0, 0); dR.connect(merger, 0, 1); merger.connect(dWet).connect(limiter);
+      return { input, disto, chorus, flanger, phaser, rvWet, dWet, dL, dR, vals: { disto: 0, chorus: 0, flanger: 0, phaser: 0, reverb: 0, delay: 0 } };
+    }
+    // Applique une valeur d'effet à la cible (master/global ou piste A–D)
+    function applyFxToTarget(target, key, val) {
+      if (target === "master") {
+        fxVals.master[key] = val;
+        if (!audioCtx) return;
+        const now = audioCtx.currentTime;
+        if (key === "delay")  { if (delayWet) delayWet.gain.setTargetAtTime(val, now, 0.05); }
+        else if (key === "reverb") { if (reverbWetGain) reverbWetGain.gain.setTargetAtTime(val, now, 0.05); }
+        else if (fxRack) fxRack[key].setAmount(val);
+        return;
+      }
+      const ch = trackChannels[target]; if (!ch) return;
+      ch.vals[key] = val;
+      const now = audioCtx.currentTime;
+      if (key === "delay")       ch.dWet.gain.setTargetAtTime(val, now, 0.05);
+      else if (key === "reverb") ch.rvWet.gain.setTargetAtTime(val, now, 0.05);
+      else                       ch[key].setAmount(val);
+    }
+    const FX_SLIDERS = [["delaySlider", "delay"], ["reverbSlider", "reverb"], ["distoSlider", "disto"], ["chorusSlider", "chorus"], ["flangerSlider", "flanger"], ["phaserSlider", "phaser"]];
+    function loadSlidersForTarget() {
+      const vals = (fxTarget === "master") ? fxVals.master : (trackChannels[fxTarget] ? trackChannels[fxTarget].vals : { delay: 0, reverb: 0, disto: 0, chorus: 0, flanger: 0, phaser: 0 });
+      FX_SLIDERS.forEach(([id, key]) => { const el = document.getElementById(id); if (el) el.value = String(vals[key] != null ? vals[key] : 0); });
+    }
+    function updateFxChips() {
+      document.querySelectorAll("#fxTargets .fxchip").forEach(c => {
+        const t = c.dataset.fxt;
+        c.classList.toggle("target", t === fxTarget);
+        c.classList.toggle("on", t !== "master" && !!trackFxOn[+t]);
+      });
+    }
+    function setFxTarget(t) { fxTarget = t; loadSlidersForTarget(); updateFxChips(); }
+    function onFxChip(t) {
+      ensureAudio();
+      if (t === "master") { setFxTarget("master"); return; }
+      const i = +t;
+      if (trackFxOn[i] && fxTarget === t) {        // re-tap sur la piste active = couper ses effets (retour au global)
+        trackFxOn[i] = false; setFxTarget("master");
+      } else {
+        if (!trackChannels[t]) { trackChannels[t] = buildTrackChannel(); }
+        trackFxOn[i] = true; setFxTarget(t);
+      }
+    }
+
     function ensureAudio() {
       if (!audioCtx) {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -1536,7 +1629,8 @@
         const wetHP = audioCtx.createBiquadFilter();
         wetHP.type = "highpass"; wetHP.frequency.value = 200;
         reverb = audioCtx.createConvolver();
-        reverb.buffer = buildReverbIR(audioCtx);
+        reverbIR = buildReverbIR(audioCtx);
+        reverb.buffer = reverbIR;
         reverbWetGain = audioCtx.createGain();
         reverbWetGain.gain.value = parseFloat(reverbSlider.value);
         rackOut.connect(wetHP).connect(reverb).connect(reverbWetGain).connect(limiter);
@@ -1572,6 +1666,10 @@
       const now = audioCtx.currentTime;
       delayL.delayTime.setTargetAtTime(t, now, 0.05);
       delayR.delayTime.setTargetAtTime(t, now, 0.05);
+      Object.values(trackChannels).forEach(ch => {
+        if (ch.dL) ch.dL.delayTime.setTargetAtTime(t, now, 0.05);
+        if (ch.dR) ch.dR.delayTime.setTargetAtTime(t, now, 0.05);
+      });
     }
 
     /* ========= Voice synthesis with vibrato handle ========= */
@@ -1635,7 +1733,7 @@
       amp.gain.exponentialRampToValueAtTime(0.0001, now + dur - 0.1);
 
       oscMix.connect(filt); subMix.connect(filt);
-      filt.connect(amp).connect(master);
+      filt.connect(amp).connect(fxDest || master);
       oscs.forEach(o => { o.start(now); o.stop(now + dur); });
       sub.start(now); sub.stop(now + dur);
       return vibratoHandle(vd);
@@ -1684,7 +1782,7 @@
       trem.connect(tremG).connect(pan.pan); trem.start(now); trem.stop(now + dur);
 
       bodyMix.connect(filt); triMix.connect(filt); tineMix.connect(filt);
-      filt.connect(amp).connect(pan).connect(master);
+      filt.connect(amp).connect(pan).connect(fxDest || master);
       [o1, o2, tCar, tMod].forEach(o => { o.start(now); o.stop(now + dur); });
       return vibratoHandle(vd);
     }
@@ -1715,7 +1813,7 @@
       amp.gain.setValueAtTime(0.5 * vel, now);
       amp.gain.exponentialRampToValueAtTime(0.0001, now + dur);
       const pluckPan = audioCtx.createStereoPanner(); pluckPan.pan.value = Math.max(-1, Math.min(1, panPos));
-      src.connect(dly); dly.connect(amp).connect(pluckPan).connect(master);
+      src.connect(dly); dly.connect(amp).connect(pluckPan).connect(fxDest || master);
       src.start(now); src.stop(now + 0.05);
 
       // CRITICAL : sans ca la boucle de feedback tourne a l'infini -> CPU sature -> crash
@@ -1780,8 +1878,8 @@
       amp.gain.exponentialRampToValueAtTime(0.0001, now + dur - 0.1);
       const carPan = audioCtx.createStereoPanner(); carPan.pan.value = Math.max(-1, Math.min(1, panPos - 0.15));
 
-      car.connect(amp).connect(carPan).connect(master);
-      shim.connect(shimG).connect(shimPan).connect(master);
+      car.connect(amp).connect(carPan).connect(fxDest || master);
+      shim.connect(shimG).connect(shimPan).connect(fxDest || master);
       [car, mod1, mod2, shim].forEach(o => o.start(now));
       [car, mod1, mod2, shim].forEach(o => o.stop(now + dur));
       return vibratoHandle(vd);
@@ -1836,7 +1934,7 @@
       amp.gain.setTargetAtTime(0.4 * vel, now + 0.3, 0.6);
 
       oscMix.connect(filt); nG.connect(filt);
-      filt.connect(amp).connect(master);
+      filt.connect(amp).connect(fxDest || master);
       oscs.forEach(o => o.start(now)); noise.start(now);
       oscs.forEach(o => o.stop(now + dur)); noise.stop(now + 0.35); autoVib.stop(now + dur);
 
@@ -1898,7 +1996,7 @@
       amp.gain.setTargetAtTime(0.32 * vel, now + 0.05, 0.3);
 
       oscMix.connect(drive); drive.connect(filt);
-      filt.connect(amp).connect(master);
+      filt.connect(amp).connect(fxDest || master);
       oscs.forEach(o => o.start(now));
       oscs.forEach(o => o.stop(now + dur)); autoVib.stop(now + dur);
 
@@ -1929,7 +2027,7 @@
       const now = audioCtx.currentTime;
       const out = audioCtx.createGain();
       const pan = audioCtx.createStereoPanner();
-      out.connect(pan).connect(master);
+      out.connect(pan).connect(fxDest || master);
       const V = Math.max(0.2, vel);
       const idx = ((midi % 8) + 8) % 8;
       // Largeur stéréo par élément : on garde le grave (kick) un peu centré pour ne pas
@@ -2099,10 +2197,12 @@
       analyse(); paint();
     }
 
-    function scheduleNoteAt(midi, vel, vc, atTime) {
+    function scheduleNoteAt(midi, vel, vc, atTime, dest) {
       const delay = Math.max(0, (atTime - audioCtx.currentTime) * 1000);
       setTimeout(() => {
+        fxDest = dest || null;                 // route vers la chaîne d'effets de la piste (sinon master)
         const h = playVoice(midi, vel, vc, panForMidi(midi));
+        fxDest = null;
         sendMIDINoteOn(midi, vel);
         setTimeout(() => {
           sendMIDINoteOff(midi);
@@ -2175,7 +2275,8 @@
             if (sequencer.trackMuted[t]) continue;
             const notes = sequencer.patterns[t][stepIdx] || [];
             const tv = sequencer.trackVoice[t] || voice;
-            notes.forEach(n => scheduleNoteAt(n.midi, humanVel(n.velocity), n.voice || tv, at));
+            const dest = (trackFxOn[t] && trackChannels[t]) ? trackChannels[t].input : null;  // FX par piste (sinon bus global)
+            notes.forEach(n => scheduleNoteAt(n.midi, humanVel(n.velocity), n.voice || tv, at, dest));
           }
           sequencer.nextStepTime += stepDur;
           sequencer.currentStep = (stepIdx + 1) % STEPS;
@@ -2714,17 +2815,15 @@
     recBtn.addEventListener("click", recButtonPressed);
     clearBtn.addEventListener("click", clearLoop);
 
-    delaySlider.addEventListener("input", () => {
-      if (delayWet) delayWet.gain.setTargetAtTime(parseFloat(delaySlider.value), audioCtx.currentTime, 0.05);
-    });
-    reverbSlider.addEventListener("input", () => {
-      if (reverbWetGain) reverbWetGain.gain.setTargetAtTime(parseFloat(reverbSlider.value), audioCtx.currentTime, 0.05);
-    });
-    [["distoSlider", "disto"], ["chorusSlider", "chorus"], ["flangerSlider", "flanger"], ["phaserSlider", "phaser"]].forEach(([id, key]) => {
+    // Les 6 curseurs d'effets agissent sur la cible courante (global/master ou piste A–D)
+    FX_SLIDERS.forEach(([id, key]) => {
       document.getElementById(id).addEventListener("input", e => {
         ensureAudio();
-        if (fxRack) fxRack[key].setAmount(parseFloat(e.target.value) || 0);
+        applyFxToTarget(fxTarget, key, parseFloat(e.target.value) || 0);
       });
+    });
+    document.querySelectorAll("#fxTargets .fxchip").forEach(c => {
+      c.addEventListener("click", () => onFxChip(c.dataset.fxt));
     });
     document.getElementById("swingSlider").addEventListener("input", e => { swingAmt = parseFloat(e.target.value) || 0; });
     document.getElementById("humanSlider").addEventListener("input", e => { humanizeAmt = parseFloat(e.target.value) || 0; });
@@ -2937,7 +3036,7 @@
       out.gain.value = (vel * 0.45) / Math.max(1, Math.sqrt(algo.carriers.length));
       algo.carriers.forEach(i => ops[i].envGain.connect(out));
       const fmPan = audioCtx.createStereoPanner(); fmPan.pan.value = Math.max(-1, Math.min(1, panPos));
-      out.connect(fmPan).connect(master);
+      out.connect(fmPan).connect(fxDest || master);
 
       // Per-op AHR envelope with sustain hold
       const noteHold = 0.35;
@@ -3623,6 +3722,11 @@
         voices: voiceSamples.map(v => ({ id: v.id, name: v.name, baseMidi: v.baseMidi, modRatio: v.modRatio, modDepth: v.modDepth, sampleRate: v.sampleRate, pcm: int16ToB64(v.int16) })),
         loop: { events: loopEvents, length: loopLength },
         sequencer: { patterns: sequencer.patterns, activePattern: sequencer.activePattern, subdivision: sequencer.subdivision, trackVoice: sequencer.trackVoice, trackMuted: sequencer.trackMuted },
+        trackFx: {
+          on: trackFxOn.slice(),
+          master: { ...fxVals.master },
+          tracks: ["0", "1", "2", "3"].map(k => trackChannels[k] ? { ...trackChannels[k].vals } : null)
+        },
         settings: {
           root: Number(rootSelect.value),
           mode: modeSelect.value,
@@ -3725,6 +3829,24 @@
             active.clear();
             paint(); analyse();
             if (audioCtx) updateDelayTime();
+          }
+          if (data.trackFx) {
+            const tf = data.trackFx;
+            if (tf.master) FX_SLIDERS.forEach(([id, key]) => {
+              if (tf.master[key] == null) return;
+              const el = document.getElementById(id); if (el) el.value = String(tf.master[key]);
+              fxVals.master[key] = tf.master[key]; applyFxToTarget("master", key, tf.master[key]);
+            });
+            if (Array.isArray(tf.tracks) && tf.tracks.some(Boolean)) {
+              ensureAudio();
+              tf.tracks.forEach((v, i) => {
+                if (!v) return;
+                if (!trackChannels[i]) trackChannels[i] = buildTrackChannel();
+                Object.keys(v).forEach(key => applyFxToTarget(String(i), key, v[key]));
+              });
+            }
+            if (Array.isArray(tf.on)) tf.on.forEach((b, i) => { trackFxOn[i] = !!b; });
+            setFxTarget("master");
           }
       }
     }
@@ -4256,7 +4378,7 @@
       vd.connect(source.detune);
 
       const smpPan = audioCtx.createStereoPanner(); smpPan.pan.value = Math.max(-1, Math.min(1, panPos));
-      source.connect(amp).connect(smpPan).connect(master);
+      source.connect(amp).connect(smpPan).connect(fxDest || master);
       source.start(now);
 
       return {
