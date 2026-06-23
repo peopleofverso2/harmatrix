@@ -3741,6 +3741,7 @@
           voice: voice,
           arpMode: arpMode,
           arpRate: arpRate,
+          style: currentStyle,
           swing: swingAmt,
           humanize: humanizeAmt,
           delaySend: parseFloat(delaySlider.value),
@@ -3822,6 +3823,7 @@
               document.querySelectorAll(".voice").forEach(b => b.classList.toggle("on", b.dataset.voice === ss.voice));
             }
             if (ss.arpMode)         { arpMode = ss.arpMode; arpSelect.value = ss.arpMode; }
+            if (ss.style != null)    setStyle(ss.style);   // 🎲 Auto retrouve le style du projet
             if (ss.arpRate)         { arpRate = ss.arpRate; const ar = document.getElementById("arpRateSelect"); if (ar) ar.value = String(ss.arpRate); }
             if (ss.swing != null)    { swingAmt = ss.swing; const e = document.getElementById("swingSlider"); if (e) e.value = ss.swing; }
             if (ss.humanize != null) { humanizeAmt = ss.humanize; const e = document.getElementById("humanSlider"); if (e) e.value = ss.humanize; }
@@ -4688,6 +4690,7 @@
       document.querySelectorAll("#styleStrip .stylebtn").forEach(b => b.classList.toggle("on", b.dataset.style === s));
     }
     function buildStyleDrums(style) { return mkSteps(put => styleDef(style).drums(put)); }
+    function isInfraBassVoice(vc) { const ib = customInstruments.find(x => x.name === "Infra Bass"); return !!ib && vc === "fm:" + ib.id; }
     // Mélodie calée sur le groove : riff syncopé (DnB) ou driving (Big Beat), tuilé avec variations, en gamme.
     function styledMelody(style, pool, tonicPc) {
       const fresh = Array.from({ length: STEPS }, () => []);
@@ -4743,6 +4746,8 @@
           if (i === 14 && Math.random() < 0.5) fresh[i].push(mk(53, 0.55));    // charley ouvert
           if (i === 15 && Math.random() < 0.3) fresh[i].push(mk(51, 0.6));     // clap de fin
         }
+      } else if (currentStyle !== "none" && isInfraBassVoice(voice)) {
+        fresh = mkSteps(put => styleDef(currentStyle).bass(put, 36 + currentTonic()));  // ligne de basse du style
       } else if (currentStyle !== "none") {
         const bands = [[55, 79], [43, 67], [60, 84], [50, 74]];
         const bnd = bands[sequencer.activePattern % bands.length];
