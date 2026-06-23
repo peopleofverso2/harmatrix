@@ -2,7 +2,7 @@
    App-shell offline. Navigation = network-first (les MAJ apparaissent en ligne,
    fallback cache hors-ligne). Assets statiques = cache-first avec mise en cache
    à la volée. Bump CACHE pour forcer un rafraîchissement complet. */
-const CACHE = "harmatrix-v28";
+const CACHE = "harmatrix-v29";
 const ASSETS = [
   "./",
   "./index.html",
