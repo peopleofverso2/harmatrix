@@ -81,9 +81,27 @@
 
     .controls  { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: var(--gap); }
     .controls > * { min-width: 0; }
-    .sound { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: var(--gap); }
-    .sound .voice { padding: 0 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-    .sound .voice.add { color: var(--scale); font-size: 18px; padding: 0; font-weight: 400; }
+    .sound {
+      display: flex; flex-wrap: nowrap; gap: var(--gap);
+      overflow-x: auto; overflow-y: hidden;
+      scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch;
+      scrollbar-width: none; padding-bottom: 2px;
+      -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 16px, #000 calc(100% - 16px), transparent 100%);
+              mask-image: linear-gradient(90deg, transparent 0, #000 16px, #000 calc(100% - 16px), transparent 100%);
+    }
+    .sound::-webkit-scrollbar { display: none; }
+    .sound .voice {
+      flex: 0 0 auto; width: auto; scroll-snap-align: center;
+      min-width: 74px; padding: 0 13px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    /* Les modes live (Empiler/Chant/Vocodeur/Sons) se distinguent des instruments */
+    .sound .voice.layerbtn:not(.on) {
+      background: color-mix(in srgb, var(--chord) 8%, rgba(255,255,255,.04));
+      border-color: color-mix(in srgb, var(--chord) 24%, var(--line));
+      color: color-mix(in srgb, var(--chord) 45%, var(--muted));
+    }
+    .sound .voice.add { color: var(--scale); font-size: 18px; padding: 0; font-weight: 400; min-width: 46px; }
     .transport { display: flex; flex-wrap: wrap; gap: var(--gap); align-items: stretch; }
     .transport > * { min-width: 0; }
     .transport > input[type=number] { flex: 0 0 54px; }
@@ -157,6 +175,18 @@
     .fx label span { min-width: 36px; font-weight: 700; letter-spacing: .02em; }
     .fx input[type=range] { flex: 1; accent-color: var(--scale); height: 4px; margin: 0; }
 
+    /* Tiroir repliable (rack d'effets) */
+    .drawer-toggle {
+      width: 100%; min-height: 30px; padding: 0 12px;
+      border: 1px solid var(--line); background: rgba(255,255,255,.035);
+      color: var(--muted); border-radius: var(--r-md);
+      font-weight: 700; font-size: 12px; font-family: inherit;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+    }
+    .drawer-toggle::after { content: "▾"; font-size: 9px; opacity: .8; transition: transform 180ms ease; }
+    .drawer-toggle.on { color: var(--text); border-color: color-mix(in srgb, var(--scale) 45%, transparent); background: color-mix(in srgb, var(--scale) 10%, rgba(255,255,255,.035)); }
+    .drawer-toggle.on::after { transform: rotate(180deg); }
+
     .gridWrap {
       background: rgba(255,255,255,.035);
       border: 1px solid var(--line);
@@ -172,9 +202,11 @@
       container-type: size;        /* permet à la grille de se dimensionner sur la plus petite dimension */
     }
     .grid {
-      width: min(100%, 100cqh);    /* plus grand carré qui tient (largeur OU hauteur) -> jamais rogné */
+      /* Occupe la largeur, et la hauteur dispo (cases un peu plus hautes = plus faciles à toucher),
+         plafonné à ~1.25 pour rester proche du carré. Jamais rogné. */
+      width: min(100cqw, 100cqh);
+      height: min(100cqh, calc(100cqw * 1.25));
       max-width: 100%;
-      aspect-ratio: 1 / 1;
       max-height: 100%;
       display: grid;
       grid-template-columns: repeat(8, minmax(0, 1fr));
@@ -660,6 +692,7 @@
     .app[data-compact="1"] .sound,
     .app[data-compact="1"] .transport,
     .app[data-compact="1"] .fx,
+    .app[data-compact="1"] #fxToggle,
     .app[data-compact="1"] #vocLevelRow,
     .app[data-compact="1"] .seqtools,
     .app[data-compact="1"] .songbar { display: none !important; }
@@ -991,7 +1024,9 @@
       <button id="clearBtn" title="Effacer la boucle">⌫</button>
     </section>
 
-    <section class="fx">
+    <button id="fxToggle" class="drawer-toggle" aria-expanded="false" aria-controls="fxRackRow">🎚 Effets &amp; groove</button>
+
+    <section class="fx" id="fxRackRow" hidden>
       <label><span>Delay</span><input id="delaySlider" type="range" min="0" max="0.7" step="0.01" value="0" /></label>
       <label><span>Reverb</span><input id="reverbSlider" type="range" min="0" max="0.7" step="0.01" value="0.32" /></label>
       <label><span>Disto</span><input id="distoSlider" type="range" min="0" max="1" step="0.01" value="0" /></label>
@@ -2635,6 +2670,7 @@
     /* ========= UI wire ========= */
     document.querySelectorAll(".voice").forEach(btn => {
       btn.addEventListener("click", () => {
+        try { btn.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" }); } catch (e) {}
         if (btn.classList.contains("add")) return;
         if (btn.id === "layerBtn") { toggleLayer(); return; }
         if (btn.id === "chantBtn") { toggleChant(); return; }
@@ -3720,6 +3756,17 @@
       b.textContent = compact ? "⤢" : "⤡";
       if (haptics && haptics.light) haptics.light();
     });
+    (function(){
+      const t = document.getElementById("fxToggle");
+      const row = document.getElementById("fxRackRow");
+      if (t && row) t.addEventListener("click", () => {
+        const show = row.hasAttribute("hidden");
+        if (show) row.removeAttribute("hidden"); else row.setAttribute("hidden", "");
+        t.classList.toggle("on", show);
+        t.setAttribute("aria-expanded", show ? "true" : "false");
+        if (haptics && haptics.light) haptics.light();
+      });
+    })();
     document.getElementById("settingsCloseBtn").addEventListener("click", () => {
       document.getElementById("settingsModal").hidden = true;
     });
