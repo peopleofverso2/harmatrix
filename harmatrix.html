@@ -1091,7 +1091,7 @@
         <button class="pat" data-pat="3">D</button>
       </div>
       <button id="liveRecBtn" class="seqbtn" title="Enregistrement live : joue la grille pendant la lecture">● Live</button>
-      <button id="genBtn" class="seqbtn" title="Générer une séquence musicale">🎲 Auto</button>
+      <button id="genBtn" class="seqbtn" title="Tap = morceau complet (basse+accords+lead+batterie) · appui long = une seule couche">🎲 Auto</button>
       <button id="songBtn" class="seqbtn" title="Couper / activer la couche sélectionnée">🔇 Muet</button>
     </section>
 
@@ -4816,6 +4816,68 @@
       if (haptics.success) haptics.success(); else haptics.medium();
     }
 
+    /* ----- 🎲 Auto "morceau complet" : arrangement accordé sur une progression d'accords ----- */
+    function scaleDegreesPc() { const root = currentTonic(); return modes[modeSelect.value].map(x => (x + root) % 12); }
+    function pcAtOrAbove(pc, floorMidi) { let m = floorMidi - (floorMidi % 12) + pc; if (m < floorMidi) m += 12; return m; }
+    function triadFrom(deg, di, floorMidi) {                 // triade diatonique ascendante (tierces empilées dans la gamme)
+      const n = deg.length; const out = []; let prev = floorMidi - 1;
+      [0, 2, 4].forEach(k => { const pc = deg[((di + k) % n + n) % n]; const m = pcAtOrAbove(pc, prev + 1); out.push(m); prev = m; });
+      return out;
+    }
+    function generateArrangement() {
+      ensureAudio();
+      const deg = scaleDegreesPc();
+      const PROGS = [[0,5,3,4],[0,4,5,3],[5,3,0,4],[0,3,4,3],[0,4,5,4],[5,4,3,4]];  // degrés de gamme -> toujours en tonalité
+      const prog = PROGS[Math.floor(Math.random() * PROGS.length)];
+      const chordDeg = s => prog[Math.floor(s / 4) % prog.length];                   // 4 accords, 4 pas chacun
+      const styled = currentStyle !== "none";
+
+      const drum = styled ? buildStyleDrums(currentStyle) : mkSteps(put => {
+        [0, 8].forEach(i => put(i, SD.K, 1)); [4, 12].forEach(i => put(i, SD.S, .9));
+        for (let i = 0; i < STEPS; i += 2) put(i, SD.HC, .4); put(14, SD.HO, .5, .5);
+      });
+      const bass = mkSteps(put => {                                                  // couche A : fondamentale grave
+        for (let s = 0; s < STEPS; s++) {
+          const onChange = s % 4 === 0;
+          if (onChange || (s % 2 === 0 && Math.random() < .35)) put(s, pcAtOrAbove(deg[chordDeg(s)], 36), onChange ? 1 : .65);
+        }
+      });
+      const chords = mkSteps(put => {                                                // couche B : triades
+        for (let s = 0; s < STEPS; s++) {
+          const onChange = s % 4 === 0;
+          if (onChange || (s % 2 === 0 && Math.random() < .4)) triadFrom(deg, chordDeg(s), 55).forEach(m => put(s, m, onChange ? .7 : .45));
+        }
+      });
+      const lead = mkSteps(put => {                                                  // couche C : mélodie sur les accords
+        const pool = scaleMidiPoolRange(64, 86);
+        let prev = pool.length ? pool[Math.floor(pool.length / 2)] : 72;
+        for (let s = 0; s < STEPS; s++) {
+          const strong = s % 4 === 0;
+          if (Math.random() < (strong ? .7 : .4)) {
+            let m;
+            if (strong) { const t = triadFrom(deg, chordDeg(s), 67); m = t[Math.floor(Math.random() * t.length)]; }
+            else { const near = pool.filter(x => Math.abs(x - prev) <= 4); m = near.length ? near[Math.floor(Math.random() * near.length)] : prev; }
+            put(s, m, strong ? .85 : .6); prev = m;
+          }
+        }
+        if (Math.random() < .7) put(STEPS - 1, pcAtOrAbove(deg[0], 67), .8);         // résolution sur la tonique
+      });
+
+      sequencer.patterns[0] = bass;   sequencer.trackVoice[0] = ensureInfraBass();
+      sequencer.patterns[1] = chords; sequencer.trackVoice[1] = "pad";
+      sequencer.patterns[2] = lead;   sequencer.trackVoice[2] = "keys";
+      sequencer.patterns[3] = drum;   sequencer.trackVoice[3] = "drums";
+      sequencer.trackMuted = [false, false, false, false];
+      sequencer.activePattern = 2; sequencer.steps = sequencer.patterns[2]; sequencer.selectedStep = -1;
+      voice = sequencer.trackVoice[2];
+      document.querySelectorAll(".voice").forEach(b => b.classList.toggle("on", b.dataset.voice === voice));
+      bpmInput.value = bpm; if (audioCtx) updateDelayTime();
+      updateAllStepUI(); updatePatternButtons(); updateSeqHint(); paint();
+      if (!sequencer.playing && !sequencer.external) toggleSeqPlay();
+      hint.textContent = "🎲 Morceau complet — basse (A) + accords (B) + lead (C) + batterie (D), accordés" + (styled ? " au style" : "") + ". Re-tape pour varier · appui long sur 🎲 = une seule couche.";
+      if (haptics.success) haptics.success();
+    }
+
     /* ----- Générateur de styles (Drum & Bass, Big Beat) + grosse infra basse ----- */
     function ensureInfraBass() {
       let inst = customInstruments.find(x => x.name === "Infra Bass");
@@ -4998,7 +5060,18 @@
       b.addEventListener("click", () => { if (lpFired) { lpFired = false; return; } selectPattern(p); });
     });
     document.getElementById("liveRecBtn").addEventListener("click", toggleLiveRecord);
-    document.getElementById("genBtn").addEventListener("click", generatePattern);
+    (function wireGenBtn() {
+      const g = document.getElementById("genBtn");
+      let lpTimer = null, lpFired = false;
+      const cancel = () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } };
+      g.addEventListener("pointerdown", () => {
+        lpFired = false;
+        lpTimer = setTimeout(() => { lpFired = true; generatePattern(); if (haptics && haptics.medium) haptics.medium(); }, 500);
+      });
+      g.addEventListener("pointerup", () => { cancel(); if (!lpFired) generateArrangement(); });   // tap = morceau complet
+      g.addEventListener("pointerleave", cancel);
+      g.addEventListener("pointercancel", cancel);
+    })();
 
     /* Empêche le geste "retour" par balayage de bord : sur un instrument plein écran,
        glisser au bord faisait apparaître la page précédente (effet de double interface décalée).
